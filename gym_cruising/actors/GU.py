@@ -4,15 +4,15 @@ from gym_cruising.geometry.point import Point
 
 class GU:
     position: Point
+    previous_position: Point
     covered: bool
     channels_state = []
-    previous_position: Point
 
     def __init__(self, position: Point) -> None:
         self.position = position
+        self.previous_position = position
         self.covered = False
         self.channels_state = []
-        self.previous_position = position
 
     def getColor(self):
         if self.covered:

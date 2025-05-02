@@ -16,7 +16,7 @@ class TransformerEncoderDecoder(nn.Module):
         # LayerNorm for normalization of output
         self.layernorm_output = nn.LayerNorm(embed_dim)
 
-        self.transformer_enocder_decoder = nn.Transformer(d_model=embed_dim, batch_first=True, num_encoder_layers=2, num_decoder_layers=2)
+        self.transformer_encoder_decoder = nn.Transformer(d_model=embed_dim, batch_first=True, num_encoder_layers=2, num_decoder_layers=2)
 
     def forward(self, GU_positions, UAV_info):
         # GU_positions shape: batch * (n, 2), n = current max connected GU
@@ -31,7 +31,7 @@ class TransformerEncoderDecoder(nn.Module):
         target = self.layernorm_decoder(target)
 
         # RAPPRESENTAZIONE DELLO STATO PER OGNI UAV
-        tokens = self.transformer_enocder_decoder(source, target)  # shape: batch * (m, embed_dim)
+        tokens = self.transformer_encoder_decoder(source, target)  # shape: batch * (m, embed_dim)
 
         # Normalizzazione dell'output
         tokens = self.layernorm_output(tokens)

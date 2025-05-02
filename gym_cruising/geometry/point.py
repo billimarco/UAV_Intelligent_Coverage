@@ -22,7 +22,7 @@ class Point:
         return math.sqrt((self.x_coordinate - other.x_coordinate) ** 2
                          + (self.y_coordinate - other.y_coordinate) ** 2)
 
-    def is_in_area(self, area: np.ndarray(2, 2)):
+    def is_in_area(self, area: np.ndarray) -> bool:
         if self.x_coordinate <= area[0, 0] or self.x_coordinate >= area[0, 1]:
             return False
         if self.y_coordinate <= area[1, 0] or self.y_coordinate >= area[1, 1]:

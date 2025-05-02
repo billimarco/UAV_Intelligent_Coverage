@@ -1,6 +1,7 @@
 """ This module contains the Cruising environment class """
 import random
 from typing import Optional, Tuple
+import math
 
 import numpy as np
 import pygame
@@ -12,23 +13,7 @@ from gym_cruising.actors.UAV import UAV
 from gym_cruising.enums.color import Color
 from gym_cruising.envs.cruise import Cruise
 from gym_cruising.geometry.point import Point
-from gym_cruising.utils import channels_utils
-
-MAX_SPEED_UAV = 55.6  # m/s - about 20 Km/h x 10 steps
-MAX_POSITION = 4000.0
-
-
-def normalizePositions(positions: np.ndarray) -> np.ndarray:  # Normalize in [-1,1]
-    nornmalized_positions = np.ndarray(shape=positions.shape, dtype=np.float64)
-    nornmalized_positions = (positions / MAX_POSITION) * 2 - 1
-    return nornmalized_positions
-
-
-def normalizeActions(actions: np.ndarray) -> np.ndarray:  # Normalize in [-1,1]
-    nornmalized_actions = np.ndarray(shape=actions.shape, dtype=np.float64)
-    nornmalized_actions = ((actions + MAX_SPEED_UAV) / (2 * MAX_SPEED_UAV)) * 2 - 1
-    return nornmalized_actions
-
+from gym_cruising.utils.channels_utils import CommunicationChannel
 
 class CruiseUAV(Cruise):
     uav = []
@@ -37,21 +22,9 @@ class CruiseUAV(Cruise):
     SINR = []
     connectivity_matrix = []
 
-    UAV_NUMBER = 2
-    STARTING_GU_NUMBER = 60
     gu_number: int
-    MINIMUM_STARTING_DISTANCE_BETWEEN_UAV = 200  # meters
-    COLLISION_DISTANCE = 10  # meters
-
-    SPAWN_GU_PROB = 0.0005
     disappear_gu_prob: float
-
-    GU_MEAN_SPEED = 5.56  # 5.56 m/s or 27.7 m/s
-    GU_STANDARD_DEVIATION = 1.97  # Gaussian goes to 0 at approximately 3 times the standard deviation
-    MAX_SPEED_UAV = 55.6  # m/s - about 20 Km/h x 10 steps
-
-    COVERED_TRESHOLD = 10.0  # dB
-
+    
     low_observation: float
     high_observation: float
 
@@ -59,40 +32,76 @@ class CruiseUAV(Cruise):
     last_RCR = None
     reward_gamma = 0.7
 
-    def __init__(self,
-                 render_mode=None, track_id: int = 1) -> None:
-        super().__init__(render_mode, track_id)
+    def __init__(self, args, render_mode=None) -> None:
+        super().__init__(args, render_mode)
+        
+        self.uav_number = args.uav_number
+        self.starting_gu_number = args.starting_gu_number
+        self.minimum_starting_distance_between_uav = args.minimum_starting_distance_between_uav # meters
+        self.collision_distance = args.collision_distance # meters
+        self.spawn_gu_prob = args.spawn_gu_prob
+        self.gu_mean_speed = args.gu_mean_speed # 5.56 m/s or 27.7 m/s
+        self.gu_standard_deviation = args.gu_standard_deviation # Gaussian goes to 0 at approximately 3 times the standard deviation
+        self.max_speed_uav = args.max_speed_uav # m/s - about 20 Km/h x 10 steps
+        self.covered_threshold = args.covered_threshold # dB
+        self.uav_altitude = args.uav_altitude # meters
+        
+        self.communication_channel = CommunicationChannel(args)
 
-        spawn_area = self.np_random.choice(self.track.spawn_area)
-        self.low_observation = float(spawn_area[0][0] - self.MAX_SPEED_UAV)
-        self.high_observation = float(spawn_area[0][1] + self.MAX_SPEED_UAV)
+        spawn_area = self.np_random.choice(self.grid.spawn_area)
+        (x_min, x_max), (y_min, y_max) = spawn_area
+
+        min_x = x_min - self.max_speed_uav
+        max_x = x_max + self.max_speed_uav
+        min_y = y_min - self.max_speed_uav
+        max_y = y_max + self.max_speed_uav
+        
+        low = np.array([min_x, min_y], dtype=np.float64)
+        high = np.array([max_x, max_y], dtype=np.float64)
+        
+        obs_shape = ((self.uav_number * 2) + self.gu_covered, 2)
+        self.low_observation = np.tile(low, (obs_shape[0], 1))
+        self.high_observation = np.tile(high, (obs_shape[0], 1))
+        
 
         self.reset_observation_action_space()
 
     def reset_observation_action_space(self):
         self.observation_space = Box(low=self.low_observation,
                                      high=self.high_observation,
-                                     shape=((self.UAV_NUMBER * 2) + self.gu_covered, 2),
+                                     shape=((self.uav_number * 2) + self.gu_covered, 2),
                                      dtype=np.float64)
 
-        self.action_space = Box(low=(-1) * self.MAX_SPEED_UAV,
-                                high=self.MAX_SPEED_UAV,
-                                shape=(self.UAV_NUMBER, 2),
+        self.action_space = Box(low=(-1) * self.max_speed_uav,
+                                high=self.max_speed_uav,
+                                shape=(self.uav_number, 2),
                                 dtype=np.float64)
 
-    def reset(self, seed=None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
+    def reset(self, seed=None) -> Tuple[np.ndarray, dict]:
         self.uav = []
         self.gu = []
-        self.UAV_NUMBER = options["uav"]
-        self.STARTING_GU_NUMBER = options["gu"]
         self.reset_observation_action_space()
-        self.gu_number = self.STARTING_GU_NUMBER
-        self.disappear_gu_prob = self.SPAWN_GU_PROB * 4 / self.gu_number
+        self.gu_number = self.starting_gu_number
+        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.gu_number
         self.gu_covered = 0
         self.last_RCR = None
         np.random.seed(seed)
-        return super().reset(seed=seed, options=options)
+        return super().reset(seed=seed)
+    
+    def normalizePositions(self, position) -> np.ndarray:  # Normalize in [-1,1]
+            max_x = self.window_width / self.resolution
+            max_y = self.window_height / self.resolution
 
+            norm_x = (position.x_coordinate / max_x) * 2 - 1
+            norm_y = (position.y_coordinate / max_y) * 2 - 1
+
+            return np.ndarray([norm_x, norm_y], dtype=np.float64)
+    
+    def normalizeActions(self, actions: np.ndarray) -> np.ndarray:  # Normalize in [-1,1]
+        normalized_actions = np.ndarray(shape=actions.shape, dtype=np.float64)
+        normalized_actions = ((actions + self.max_speed_uav) / (2 * self.max_speed_uav)) * 2 - 1
+        return normalized_actions
+        
     def perform_action(self, actions) -> None:
         self.move_UAV(actions)
         self.update_GU()
@@ -117,12 +126,12 @@ class CruiseUAV(Cruise):
 
     # Random walk the GU
     def move_GU(self):
-        area = self.np_random.choice(self.track.spawn_area)
+        area = self.np_random.choice(self.grid.spawn_area)
         for gu in self.gu:
             repeat = True
             while repeat:
                 previous_position = gu.position
-                distance = self.np_random.normal(self.GU_MEAN_SPEED, self.GU_STANDARD_DEVIATION)
+                distance = self.np_random.normal(self.gu_mean_speed, self.gu_standard_deviation)
                 if distance < 0.0:
                     distance = 0.0
                 direction = np.random.choice(['up', 'down', 'left', 'right'])
@@ -144,6 +153,12 @@ class CruiseUAV(Cruise):
                 else:
                     repeat = True
 
+    # calculate distance between one UAV and one GU in air line
+    def calculate_distance_uav_gu(self, uav: Point, gu: Point):
+        return math.sqrt(math.pow(uav.x_coordinate - gu.x_coordinate, 2) +
+                        math.pow(uav.y_coordinate - gu.y_coordinate, 2) +
+                        self.uav_altitude ** 2)
+        
     def calculate_PathLoss_with_Markov_Chain(self):
         self.pathLoss = []
         for gu in self.gu:
@@ -151,14 +166,14 @@ class CruiseUAV(Cruise):
             new_channels_state = []
             gu_shift = gu.position.calculate_distance(gu.previous_position)
             for index, uav in enumerate(self.uav):
-                distance = channels_utils.calculate_distance_uav_gu(uav.position, gu.position)
-                channel_PLoS = channels_utils.get_PLoS(distance)
+                distance = self.calculate_distance_uav_gu(uav.position, gu.position)
+                channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
                 relative_shift = uav.position.calculate_distance(uav.previous_position) + gu_shift
-                transition_matrix = channels_utils.get_transition_matrix(relative_shift, channel_PLoS)
+                transition_matrix = self.communication_channel.get_transition_matrix(relative_shift, channel_PLoS)
                 current_state = np.random.choice(range(len(transition_matrix)),
                                                  p=transition_matrix[gu.channels_state[index]])
                 new_channels_state.append(current_state)
-                path_loss = channels_utils.get_PathLoss(distance, current_state)
+                path_loss = self.communication_channel.get_PathLoss(distance, current_state)
                 current_GU_PathLoss.append(path_loss)
             self.pathLoss.append(current_GU_PathLoss)
             gu.setChannelsState(new_channels_state)
@@ -171,7 +186,7 @@ class CruiseUAV(Cruise):
             for j in range(len(self.uav)):
                 copy_list = current_pathLoss.copy()
                 del copy_list[j]
-                current_GU_SINR.append(channels_utils.getSINR(current_pathLoss[j], copy_list))
+                current_GU_SINR.append(self.communication_channel.getSINR(current_pathLoss[j], copy_list))
             self.SINR.append(current_GU_SINR)
 
     def check_if_disappear_GU(self):
@@ -190,8 +205,8 @@ class CruiseUAV(Cruise):
     def check_if_spawn_new_GU(self):
         sample = random.random()
         for _ in range(4):
-            if sample <= self.SPAWN_GU_PROB:
-                area = self.np_random.choice(self.track.spawn_area)
+            if sample <= self.spawn_gu_prob:
+                area = self.np_random.choice(self.grid.spawn_area)
                 x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
                 y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
                 gu = GU(Point(x_coordinate, y_coordinate))
@@ -199,52 +214,45 @@ class CruiseUAV(Cruise):
                 self.gu.append(gu)
                 self.gu_number += 1
         # update disappear gu probability
-        self.disappear_gu_prob = self.SPAWN_GU_PROB * 4 / self.gu_number
+        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.gu_number
 
     def check_connection_and_coverage_UAV_GU(self):
         covered = 0
-        self.connectivity_matrix = np.zeros((self.gu_number, self.UAV_NUMBER), dtype=int)
+        self.connectivity_matrix = np.zeros((self.gu_number, self.uav_number), dtype=int)
         for i, gu in enumerate(self.gu):
             gu.setCovered(False)
             current_SINR = self.SINR[i]
             for j in range(len(self.uav)):
-                if current_SINR[j] >= self.COVERED_TRESHOLD:
+                if current_SINR[j] >= self.covered_threshold:
                     self.connectivity_matrix[i, j] = 1
-            if any(SINR >= self.COVERED_TRESHOLD for SINR in current_SINR):
+            if any(SINR >= self.covered_threshold for SINR in current_SINR):
                 gu.setCovered(True)
                 covered += 1
         self.gu_covered = covered
 
     def get_observation(self) -> np.ndarray:
+        
         self.observation_space = Box(low=self.low_observation,
                                      high=self.high_observation,
-                                     shape=((self.UAV_NUMBER * 2) + self.gu_covered, 2),
+                                     shape=((self.uav_number * 2) + self.gu_covered, 2),
                                      dtype=np.float64)
-        observation = [
-            normalizePositions(np.array([self.uav[0].position.x_coordinate, self.uav[0].position.y_coordinate]))]
-        observation = np.append(observation,
-                                [normalizeActions(np.array([self.uav[0].last_shift_x, self.uav[0].last_shift_y]))],
-                                axis=0)
-        for i in range(1, self.UAV_NUMBER):
-            observation = np.append(observation,
-                                    [normalizePositions(np.array(
-                                        [self.uav[i].position.x_coordinate, self.uav[i].position.y_coordinate]))],
-                                    axis=0)
-            observation = np.append(observation,
-                                    [normalizeActions(np.array([self.uav[i].last_shift_x, self.uav[i].last_shift_y]))],
-                                    axis=0)
+        
+        observation = [self.normalizePositions(self.uav[0].position)]
+        
+        observation = np.append(observation, [self.normalizeActions(np.array([self.uav[0].last_shift_x, self.uav[0].last_shift_y]))], axis=0)
+        
+        for i in range(1, self.uav_number):
+            observation = np.append(observation, [self.normalizePositions(self.uav[i].position)], axis=0)
+            observation = np.append(observation, [self.normalizeActions(np.array([self.uav[i].last_shift_x, self.uav[i].last_shift_y]))], axis=0)
 
         for gu in self.gu:
             if gu.covered:
-                observation = np.append(observation,
-                                        [normalizePositions(
-                                            np.array([gu.position.x_coordinate, gu.position.y_coordinate]))],
-                                        axis=0)
+                observation = np.append(observation, [self.normalizePositions(gu.position)], axis=0)
         return observation
 
     def check_if_terminated(self):
         terminated_matrix = []
-        area = self.np_random.choice(self.track.spawn_area)
+        area = self.np_random.choice(self.grid.spawn_area)
         for i, uav in enumerate(self.uav):
             if not uav.position.is_in_area(area) or self.collision(i, uav):
                 terminated_matrix.append(True)
@@ -256,7 +264,7 @@ class CruiseUAV(Cruise):
         collision = False
         for j, other_uav in enumerate(self.uav):
             if j != current_uav_index:
-                if uav.position.calculate_distance(other_uav.position) <= self.COLLISION_DISTANCE:
+                if uav.position.calculate_distance(other_uav.position) <= self.collision_distance:
                     collision = True
                     break
         return collision
@@ -288,23 +296,23 @@ class CruiseUAV(Cruise):
         reward_smorzato = np.add(current_rewards, delta_RCR_smorzato)
         return [r * 100.0 for r in reward_smorzato]
 
-    def init_environment(self, options: Optional[dict] = None) -> None:
+    def init_environment(self, clustered: bool) -> None:
         self.init_uav()
-        if options['clustered'] == 0:
+        if not clustered:
             self.init_gu()
         else:
-            self.init_gu_clustered(options)
+            self.init_gu_clustered()
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
         self.check_connection_and_coverage_UAV_GU()
 
     def init_uav(self) -> None:
-        area = self.np_random.choice(self.track.spawn_area)
+        area = self.np_random.choice(self.grid.spawn_area)
         # x_coordinate = self.np_random.uniform(area[0][0] + 800, area[0][1] - 800)
         x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
         y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
         self.uav.append(UAV(Point(x_coordinate, y_coordinate)))
-        for i in range(1, self.UAV_NUMBER):
+        for i in range(1, self.uav_number):
             x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
             y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
             position = Point(x_coordinate, y_coordinate)
@@ -317,13 +325,13 @@ class CruiseUAV(Cruise):
     def are_too_close(self, uav_index, position):
         too_close = False
         for j in range(uav_index):
-            if self.uav[j].position.calculate_distance(position) <= self.MINIMUM_STARTING_DISTANCE_BETWEEN_UAV:
+            if self.uav[j].position.calculate_distance(position) <= self.minimum_starting_distance_between_uav:
                 too_close = True
                 break
         return too_close
 
     def init_gu(self) -> None:
-        area = self.np_random.choice(self.track.spawn_area)
+        area = self.np_random.choice(self.grid.spawn_area)
         for _ in range(self.gu_number):
             x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
             y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
@@ -331,27 +339,26 @@ class CruiseUAV(Cruise):
             self.initialize_channel(gu)
             self.gu.append(gu)
 
-    def reset_gu(self, options: Optional[dict] = None) -> np.ndarray:
+    def reset_gu(self, clustered: bool) -> np.ndarray:
         self.gu = []
-        self.STARTING_GU_NUMBER = options["gu"]
-        self.gu_number = self.STARTING_GU_NUMBER
-        self.disappear_gu_prob = self.SPAWN_GU_PROB * 4 / self.gu_number
+        self.gu_number = self.starting_gu_number
+        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.gu_number
         self.gu_covered = 0
         self.last_RCR = None
-        if options['clustered'] == 0:
+        if not clustered:
             self.init_gu()
         else:
-            self.init_gu_clustered(options)
+            self.init_gu_clustered()
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
         self.check_connection_and_coverage_UAV_GU()
         return self.get_observation()
 
-    def init_gu_clustered(self, options: Optional[dict] = None) -> None:
-        area = self.np_random.choice(self.track.spawn_area)
-        std_dev = np.sqrt(options['variance'])
-        number_of_clusters = options['clusters_number']
-        gu_for_cluster = int(self.STARTING_GU_NUMBER / number_of_clusters)
+    def init_gu_clustered(self, variance, cluster_number) -> None:
+        area = self.np_random.choice(self.grid.spawn_area)
+        std_dev = np.sqrt(variance)
+        number_of_clusters = cluster_number
+        gu_for_cluster = int(self.starting_gu_number / number_of_clusters)
         for i in range(number_of_clusters):
             mean_x = self.np_random.uniform(area[0][0] + 250, area[0][1] - 250)
             mean_y = self.np_random.uniform(area[0][0] + 250, area[0][1] - 250)
@@ -370,8 +377,8 @@ class CruiseUAV(Cruise):
 
     def initialize_channel(self, gu):
         for uav in self.uav:
-            distance = channels_utils.calculate_distance_uav_gu(uav.position, gu.position)
-            initial_channel_PLoS = channels_utils.get_PLoS(distance)
+            distance = self.calculate_distance_uav_gu(uav.position, gu.position)
+            initial_channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
             sample = random.random()
             if sample <= initial_channel_PLoS:
                 gu.channels_state.append(0)  # 0 = LoS
@@ -388,7 +395,7 @@ class CruiseUAV(Cruise):
                              Color.BLACK.value,
                              self.convert_point(wall.start),
                              self.convert_point(wall.end),
-                             self.WIDTH)
+                             self.wall_width)
 
         # GU image
         for gu in self.gu:
@@ -400,18 +407,18 @@ class CruiseUAV(Cruise):
             canvas.blit(icon_drone, self.image_convert_point(uav.position))
 
     def convert_point(self, point: Point) -> Tuple[int, int]:
-        pygame_x = (round(point.x_coordinate * self.RESOLUTION)
-                    + self.X_OFFSET)
+        pygame_x = (round(point.x_coordinate * self.resolution)
+                    + self.x_offset)
         pygame_y = (self.window_size
-                    - round(point.y_coordinate * self.RESOLUTION)
-                    + self.Y_OFFSET)
+                    - round(point.y_coordinate * self.resolution)
+                    + self.y_offset)
         return pygame_x, pygame_y
 
     def image_convert_point(self, point: Point) -> Tuple[int, int]:
         shiftX = 15
         shiftY = 15
-        pygame_x = (round(point.x_coordinate * self.RESOLUTION) - shiftX + self.X_OFFSET)
-        pygame_y = (self.window_size - round(point.y_coordinate * self.RESOLUTION) - shiftY + self.Y_OFFSET)
+        pygame_x = (round(point.x_coordinate * self.resolution) - shiftX + self.x_offset)
+        pygame_y = (self.window_size - round(point.y_coordinate * self.resolution) - shiftY + self.y_offset)
         return pygame_x, pygame_y
 
     def create_info(self, terminated) -> dict:

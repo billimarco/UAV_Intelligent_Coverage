@@ -9,7 +9,7 @@ import pygame
 from gymnasium import Env
 from pygame import Surface
 
-from gym_cruising.enums.track import Track
+from gym_cruising.enums.grid import Grid
 from gym_cruising.geometry.line import Line
 
 
@@ -20,24 +20,25 @@ class Cruise(Env):
     can inherit from one another and only redefine certain methods.
     """
 
-    RESOLUTION = 0.25  # 1.0 metro => 0.1667 pixels for track 1, 0.25 pixels for track 2, 0.3333 pixels for track 3, 0.5 pixels for track 4
-    WIDTH = 3
-    Y_OFFSET = 0
-    X_OFFSET = 0
-
-    track: Track
+    grid: Grid
     world: Tuple[Line, ...]
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 8}
 
-    def __init__(self, render_mode=None, track_id: int = 1) -> None:
-        self.window_size = 1000  # The size of the PyGame window
-        self.track = Track(track_id)
+    def __init__(self, args, render_mode=None) -> None:
+        self.window_width = args.window_width  # The width size of the PyGame window
+        self.window_height = args.window_height  # The height size of the PyGame window
+        self.grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
         self.window = None
         self.clock = None
+        
+        self.resolution = args.resolution
+        self.x_offset = args.x_offset
+        self.y_offset = args.y_offset
+        self.wall_width = args.wall_width
 
     def step(self, actions) -> Tuple[np.ndarray, List, bool, bool, dict]:
 
@@ -80,13 +81,13 @@ class Cruise(Env):
     def create_info(self, terminated) -> dict:
         pass
 
-    def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
+    def reset(self, seed=None) -> Tuple[np.ndarray, dict]:
 
         super().reset(seed=seed)
         np.random.seed(seed)
-        self.world = deepcopy(self.track.walls)
+        self.world = deepcopy(self.grid.walls)
 
-        self.init_environment(options)
+        self.init_environment()
 
         observation = self.get_observation()
         terminated = self.check_if_terminated()
@@ -98,7 +99,7 @@ class Cruise(Env):
         return observation, info
 
     @abstractmethod
-    def init_environment(self, options=None) -> None:
+    def init_environment(self) -> None:
         pass
 
     def render(self):
@@ -108,14 +109,14 @@ class Cruise(Env):
         if self.window is None and self.render_mode == "human":
             pygame.init()
             pygame.display.init()
-            self.window = pygame.display.set_mode((self.window_size, self.window_size))
+            self.window = pygame.display.set_mode((self.window_width, self.window_height))
         if self.clock is None and self.render_mode == "human":
             self.clock = pygame.time.Clock()
 
         if self.window is None or self.clock is None:
             return
 
-        canvas = Surface((self.window_size, self.window_size))
+        canvas = Surface((self.window_width, self.window_height))
         # Draw the canvas
         self.draw(canvas)
 
