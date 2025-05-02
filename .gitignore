@@ -1,1 +1,3 @@
-script/wandb/
+wandb/
+
+__pycache__/
