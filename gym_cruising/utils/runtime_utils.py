@@ -65,8 +65,10 @@ def parse_args():
                         help="Algorithm to use: PPO, TD3")
     
     # Environment specific arguments
-    parser.add_argument("--uav-number", type=int, default=1,
-                        help="the number of UAVs in the environment")
+    parser.add_argument("--max-uav-number", type=int, default=3,
+                        help="the max number of UAVs in the environment")
+    parser.add_argument("--uav-number", type=int, default=3,
+                        help="the number of UAVs in the environment (not more than max-uav-number)")
     parser.add_argument("--starting-gu-number", type=int, default=30,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--window-width", type=int, default=1000,
@@ -117,6 +119,15 @@ def parse_args():
                         help="Channel bandwidth in Hz (e.g. 2e6 for 2 MHz)")
     parser.add_argument("--noise-psd", type=float, default=-174,
                         help="Power spectral density of noise in dBm/Hz")
+    
+    parser.add_argument("--clustered", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+                        help="if toggled, GU are clustered")
+    parser.add_argument("--clusters-number", type=int, default=1,
+                        help="the number of clusters in the environment")
+    parser.add_argument("--clusters-variance-min", type=int, default=70000,
+                        help="the minimum variance of the clusters")
+    parser.add_argument("--clusters-variance-max", type=int, default=100000,
+                        help="the maximum variance of the clusters")
     
     # Algorithm specific arguments
     parser.add_argument("--num-envs", type=int, default=32,

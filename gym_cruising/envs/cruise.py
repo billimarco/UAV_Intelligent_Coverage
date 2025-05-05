@@ -81,13 +81,13 @@ class Cruise(Env):
     def create_info(self, terminated) -> dict:
         pass
 
-    def reset(self, seed=None) -> Tuple[np.ndarray, dict]:
+    def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
 
-        super().reset(seed=seed)
+        super().reset(seed=seed, options=options)
         np.random.seed(seed)
         self.world = deepcopy(self.grid.walls)
 
-        self.init_environment()
+        self.init_environment(options=options)
 
         observation = self.get_observation()
         terminated = self.check_if_terminated()
@@ -99,7 +99,7 @@ class Cruise(Env):
         return observation, info
 
     @abstractmethod
-    def init_environment(self) -> None:
+    def init_environment(self, options=None) -> None:
         pass
 
     def render(self):

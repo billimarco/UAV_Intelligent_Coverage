@@ -67,7 +67,7 @@ if __name__ == "__main__":
                 mode=mode,
                 name=run_name,
                 monitor_gym=True,
-                save_code=True,
+                save_code=True
             )
 
 
@@ -134,10 +134,28 @@ if __name__ == "__main__":
                         output = output * args.max_speed_uav
                         action.append(output)
             return action
+        
+        def select_actions(state, uav_number):
+            uav_info, connected_gu_positions = np.split(state, [uav_number * 2], axis=0)
+            uav_info = uav_info.reshape(uav_number, 4)
+            uav_info = torch.from_numpy(uav_info).float().to(device)
+            connected_gu_positions = torch.from_numpy(connected_gu_positions).float().to(device)
+            action = []
+            with torch.no_grad():
+                tokens = transformer_policy(connected_gu_positions.unsqueeze(0), uav_info.unsqueeze(0)).squeeze(0)
+            for i in range(uav_number):
+                with torch.no_grad():
+                    # return action according to MLP [vx, vy]
+                    output = mlp_policy(tokens[i])
+                    output = output.cpu().numpy().reshape(2)
+                    output = output * args.max_speed_uav
+                    action.append(output)
+            return action
 
 
         def optimize_model():
             global BATCH_SIZE
+            torch.autograd.set_detect_anomaly(True)
 
             if len(replay_buffer_uniform) < 5000 or len(replay_buffer_clustered) < 5000:
                 return
@@ -266,9 +284,10 @@ if __name__ == "__main__":
             # log metrics to wandb
             wandb.log({"loss_Q": loss_Q, "loss_policy": loss_policy, "loss_transformer": loss_transformer})
 
+            '''
             optimizer_deep_Q.zero_grad()
             optimizer_transformer.zero_grad()
-            loss_Q.backward()
+            loss_Q.backward(retain_graph=True)
             torch.nn.utils.clip_grad_norm_(deep_Q_net_policy.parameters(), 5)  # clip_grad_value_
             torch.nn.utils.clip_grad_norm_(transformer_policy.parameters(), 5)  # clip_grad_value_
             optimizer_deep_Q.step()
@@ -283,6 +302,26 @@ if __name__ == "__main__":
                 optimizer_mlp.step()
 
                 soft_update_target_networks()
+            '''
+            total_loss = loss_Q + loss_policy + loss_transformer
+
+            optimizer_deep_Q.zero_grad()
+            optimizer_transformer.zero_grad()
+            optimizer_mlp.zero_grad()
+
+            total_loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(deep_Q_net_policy.parameters(), 5)
+            torch.nn.utils.clip_grad_norm_(transformer_policy.parameters(), 5)
+            torch.nn.utils.clip_grad_norm_(mlp_policy.parameters(), 5)
+
+            optimizer_deep_Q.step()
+            optimizer_transformer.step()
+            optimizer_mlp.step()
+            
+            if time_steps_done % policy_delay == 0:
+                soft_update_target_networks()
+
 
 
         def soft_update_target_networks():
@@ -321,14 +360,14 @@ if __name__ == "__main__":
 
 
         def get_clustered_options():
-            variance = random.randint(70000, 100000)
+            variance = random.randint(args.clusters_variance_min, args.clusters_variance_max)
 
             if args.uav_number == 1:
-                clusters_number = random.randint(1, 2)
+                clusters_number = random.randint(args.clusters_number, args.clusters_number+1)
             elif args.uav_number == 2:
-                clusters_number = random.randint(2, 4)
+                clusters_number = random.randint(args.clusters_number*2, args.clusters_number*2+2)
             else:
-                args.uav_number = random.randint(3, 6)
+                clusters_number = random.randint(args.clusters_number*3, args.clusters_number*3+3)
 
             return ({
                 "uav": args.uav_number,
@@ -340,6 +379,11 @@ if __name__ == "__main__":
 
 
         def get_set_up():
+            
+            if args.uav_number == args.max_uav_number:
+                args.uav_number = 1
+            else:
+                args.uav_number += 1
 
             sample = random.random()
             if sample > 0.3:
@@ -347,47 +391,16 @@ if __name__ == "__main__":
             else:
                 options = get_uniform_options()
 
-            if args.uav_number == 3:
-                args.uav_number = 0
-            else:
-                args.uav_number += 1
-
             return options
-
-
-        def select_actions(state, uav_numebr):
-            uav_info, connected_gu_positions = np.split(state, [uav_numebr * 2], axis=0)
-            uav_info = uav_info.reshape(uav_numebr, 4)
-            uav_info = torch.from_numpy(uav_info).float().to(device)
-            connected_gu_positions = torch.from_numpy(connected_gu_positions).float().to(device)
-            action = []
-            with torch.no_grad():
-                tokens = transformer_policy(connected_gu_positions.unsqueeze(0), uav_info.unsqueeze(0)).squeeze(0)
-            for i in range(uav_numebr):
-                with torch.no_grad():
-                    # return action according to MLP [vx, vy]
-                    output = mlp_policy(tokens[i])
-                    output = output.cpu().numpy().reshape(2)
-                    output = output * args.max_speed_uav
-                    action.append(output)
-            return action
 
 
         def add_padding(state, next_state, actions, reward, uav_number):
             padding = np.array([[0., 0.]])
             action_padding = [100., 100.]
-            if uav_number == 1:
-                for i in range(2, 6):
-                    state = np.insert(state, i, padding, axis=0)
-                    next_state = np.insert(next_state, i, padding, axis=0)
-                actions.append(action_padding)
-                actions.append(action_padding)
-                reward.append(0.)
-                reward.append(0.)
-            if uav_number == 2:
-                for i in range(4, 6):
-                    state = np.insert(state, i, padding, axis=0)
-                    next_state = np.insert(next_state, i, padding, axis=0)
+            for i in range(args.uav_number*2, args.max_uav_number*2):
+                state = np.insert(state, i, padding, axis=0)
+                next_state = np.insert(next_state, i, padding, axis=0)
+            for i in range(args.uav_number, args.max_uav_number):
                 actions.append(action_padding)
                 reward.append(0.)
             return state, next_state, actions, reward
@@ -399,15 +412,36 @@ if __name__ == "__main__":
             reward_sum_uniform = 0.0
             reward_sum_clustered = 0.0
             sum_last_rcr = 0.0
+            
+            options = ({
+                       "uav": 1,
+                       "gu": 30,
+                       "clustered": True,
+                       "clusters_number": 1,
+                       "variance": 100000
+                   },
+                   {
+                       "uav": 2,
+                       "gu": 60,
+                       "clustered": True,
+                       "clusters_number": 2,
+                       "variance": 100000
+                   },
+                   {
+                       "uav": 3,
+                       "gu": 90,
+                       "clustered": True,
+                       "clusters_number": 3,
+                       "variance": 100000
+                   })
 
             seeds = [42, 751, 853]
             for i, seed in enumerate(seeds):
                 np.random.seed(seed)
-                state, info = env.reset(seed=seed)
+                state, info = env.reset(seed=seed, options=options[i])
                 steps = 1
-                uav_number = args.uav_number
                 while True:
-                    actions = select_actions(state, uav_number)
+                    actions = select_actions(state, options[i]['uav'])
                     next_state, reward, terminated, truncated, info = env.step(actions)
                     reward_sum_clustered += sum(reward)
 
@@ -423,15 +457,36 @@ if __name__ == "__main__":
                         break
 
             wandb.log({"reward_clustered": reward_sum_clustered})
+            
+            options = ({
+                       "uav": 1,
+                       "gu": 30,
+                       "clustered": False,
+                       "clusters_number": 0,
+                       "variance": 0
+                   },
+                   {
+                       "uav": 2,
+                       "gu": 60,
+                       "clustered": False,
+                       "clusters_number": 0,
+                       "variance": 0
+                   },
+                   {
+                       "uav": 3,
+                       "gu": 90,
+                       "clustered": False,
+                       "clusters_number": 0,
+                       "variance": 0
+                   })
 
             seeds = [54321, 1181, 3475]
             for i, seed in enumerate(seeds):
                 np.random.seed(seed)
-                state, info = env.reset(seed=seed)
+                state, info = env.reset(seed=seed, options=options[i])
                 steps = 1
-                uav_number = args.uav_number
                 while True:
-                    actions = select_actions(state, uav_number)
+                    actions = select_actions(state, options[i]['uav'])
                     next_state, reward, terminated, truncated, info = env.step(actions)
                     reward_sum_uniform += sum(reward)
 
@@ -476,7 +531,7 @@ if __name__ == "__main__":
         for i_episode in range(0, num_episodes, 1):
             print("Episode: ", i_episode)
             options = get_set_up()
-            state, info = env.reset(seed=int(time.perf_counter()))
+            state, info = env.reset(seed=int(time.perf_counter()), options=options)
             steps = 1
             while True:
                 actions = select_actions_epsilon(state, options['uav'])
@@ -490,7 +545,7 @@ if __name__ == "__main__":
                 state_padding, next_state_padding, actions_padding, reward_padding = add_padding(state, next_state, actions,
                                                                                                 reward,
                                                                                                 options['uav'])
-                if options['clustered']:
+                if not options['clustered']:
                     replay_buffer_uniform.push(state_padding, actions_padding, next_state_padding, reward_padding,
                                             int(terminated))
                 else:
@@ -560,7 +615,7 @@ if __name__ == "__main__":
         time = int(time.perf_counter())
         print("Time: ", time)
         np.random.seed(time)
-        state, info = env.reset(seed=time)
+        state, info = env.reset(seed=time, options=options)
         steps = 1
         uav_number = options["uav"]
         while True:

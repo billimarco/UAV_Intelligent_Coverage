@@ -21,8 +21,6 @@ class CruiseUAV(Cruise):
     pathLoss = []
     SINR = []
     connectivity_matrix = []
-
-    gu_number: int
     disappear_gu_prob: float
     
     low_observation: float
@@ -47,7 +45,11 @@ class CruiseUAV(Cruise):
         self.uav_altitude = args.uav_altitude # meters
         
         self.communication_channel = CommunicationChannel(args)
+        
 
+        self.reset_observation_action_space()
+
+    def reset_observation_action_space(self):
         spawn_area = self.np_random.choice(self.grid.spawn_area)
         (x_min, x_max), (y_min, y_max) = spawn_area
 
@@ -62,11 +64,6 @@ class CruiseUAV(Cruise):
         obs_shape = ((self.uav_number * 2) + self.gu_covered, 2)
         self.low_observation = np.tile(low, (obs_shape[0], 1))
         self.high_observation = np.tile(high, (obs_shape[0], 1))
-        
-
-        self.reset_observation_action_space()
-
-    def reset_observation_action_space(self):
         self.observation_space = Box(low=self.low_observation,
                                      high=self.high_observation,
                                      shape=((self.uav_number * 2) + self.gu_covered, 2),
@@ -77,16 +74,17 @@ class CruiseUAV(Cruise):
                                 shape=(self.uav_number, 2),
                                 dtype=np.float64)
 
-    def reset(self, seed=None) -> Tuple[np.ndarray, dict]:
+    def reset(self, seed=None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
         self.uav = []
         self.gu = []
+        self.uav_number = options["uav"]
+        self.starting_gu_number = options["gu"]
         self.reset_observation_action_space()
-        self.gu_number = self.starting_gu_number
-        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.gu_number
+        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
         self.last_RCR = None
         np.random.seed(seed)
-        return super().reset(seed=seed)
+        return super().reset(seed=seed, options=options)
     
     def normalizePositions(self, position) -> np.ndarray:  # Normalize in [-1,1]
             max_x = self.window_width / self.resolution
@@ -95,7 +93,7 @@ class CruiseUAV(Cruise):
             norm_x = (position.x_coordinate / max_x) * 2 - 1
             norm_y = (position.y_coordinate / max_y) * 2 - 1
 
-            return np.ndarray([norm_x, norm_y], dtype=np.float64)
+            return np.array([norm_x, norm_y], dtype=np.float64)
     
     def normalizeActions(self, actions: np.ndarray) -> np.ndarray:  # Normalize in [-1,1]
         normalized_actions = np.ndarray(shape=actions.shape, dtype=np.float64)
@@ -110,9 +108,9 @@ class CruiseUAV(Cruise):
         self.check_connection_and_coverage_UAV_GU()
 
     def update_GU(self):
+        self.check_if_spawn_new_GU()
         self.move_GU()
         self.check_if_disappear_GU()
-        self.check_if_spawn_new_GU()
 
     def move_UAV(self, actions):
         for i, uav in enumerate(self.uav):
@@ -190,17 +188,17 @@ class CruiseUAV(Cruise):
             self.SINR.append(current_GU_SINR)
 
     def check_if_disappear_GU(self):
-        disappeared_GU = 0
         index_to_remove = []
-        for i in range(self.gu_number):
+        for i in range(len(self.gu)):
             sample = random.random()
             if sample <= self.disappear_gu_prob:
                 index_to_remove.append(i)
-                disappeared_GU += 1
         index_to_remove = sorted(index_to_remove, reverse=True)
+        if index_to_remove != []:
+            print("GU disappeared: ", index_to_remove)
+            print("self.gu number: ", len(self.gu))
         for index in index_to_remove:
             del self.gu[index]
-        self.gu_number -= disappeared_GU
 
     def check_if_spawn_new_GU(self):
         sample = random.random()
@@ -212,13 +210,12 @@ class CruiseUAV(Cruise):
                 gu = GU(Point(x_coordinate, y_coordinate))
                 self.initialize_channel(gu)
                 self.gu.append(gu)
-                self.gu_number += 1
         # update disappear gu probability
-        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.gu_number
+        self.disappear_gu_prob = self.spawn_gu_prob * 4 / len(self.gu)
 
     def check_connection_and_coverage_UAV_GU(self):
         covered = 0
-        self.connectivity_matrix = np.zeros((self.gu_number, self.uav_number), dtype=int)
+        self.connectivity_matrix = np.zeros((len(self.gu), self.uav_number), dtype=int)
         for i, gu in enumerate(self.gu):
             gu.setCovered(False)
             current_SINR = self.SINR[i]
@@ -231,12 +228,6 @@ class CruiseUAV(Cruise):
         self.gu_covered = covered
 
     def get_observation(self) -> np.ndarray:
-        
-        self.observation_space = Box(low=self.low_observation,
-                                     high=self.high_observation,
-                                     shape=((self.uav_number * 2) + self.gu_covered, 2),
-                                     dtype=np.float64)
-        
         observation = [self.normalizePositions(self.uav[0].position)]
         
         observation = np.append(observation, [self.normalizeActions(np.array([self.uav[0].last_shift_x, self.uav[0].last_shift_y]))], axis=0)
@@ -296,12 +287,12 @@ class CruiseUAV(Cruise):
         reward_smorzato = np.add(current_rewards, delta_RCR_smorzato)
         return [r * 100.0 for r in reward_smorzato]
 
-    def init_environment(self, clustered: bool) -> None:
+    def init_environment(self, options: Optional[dict] = None) -> None:
         self.init_uav()
-        if not clustered:
+        if not options["clustered"]:
             self.init_gu()
         else:
-            self.init_gu_clustered()
+            self.init_gu_clustered(options)
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
         self.check_connection_and_coverage_UAV_GU()
@@ -332,32 +323,31 @@ class CruiseUAV(Cruise):
 
     def init_gu(self) -> None:
         area = self.np_random.choice(self.grid.spawn_area)
-        for _ in range(self.gu_number):
+        for _ in range(self.starting_gu_number):
             x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
             y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
             gu = GU(Point(x_coordinate, y_coordinate))
             self.initialize_channel(gu)
             self.gu.append(gu)
 
-    def reset_gu(self, clustered: bool) -> np.ndarray:
+    def reset_gu(self, options: Optional[dict] = None) -> np.ndarray:
         self.gu = []
-        self.gu_number = self.starting_gu_number
-        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.gu_number
+        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
         self.last_RCR = None
-        if not clustered:
+        if not options['clustered']:
             self.init_gu()
         else:
-            self.init_gu_clustered()
+            self.init_gu_clustered(options)
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
         self.check_connection_and_coverage_UAV_GU()
         return self.get_observation()
 
-    def init_gu_clustered(self, variance, cluster_number) -> None:
+    def init_gu_clustered(self, options: Optional[dict] = None) -> None:
         area = self.np_random.choice(self.grid.spawn_area)
-        std_dev = np.sqrt(variance)
-        number_of_clusters = cluster_number
+        std_dev = np.sqrt(options['variance'])
+        number_of_clusters = options['clusters_number']
         gu_for_cluster = int(self.starting_gu_number / number_of_clusters)
         for i in range(number_of_clusters):
             mean_x = self.np_random.uniform(area[0][0] + 250, area[0][1] - 250)
@@ -430,6 +420,6 @@ class CruiseUAV(Cruise):
         if collision:
             RCR = str(0.0)
         else:
-            RCR = str(self.gu_covered/self.gu_number)
+            RCR = str(self.gu_covered/len(self.gu))
         return {"GU coperti": str(self.gu_covered), "Ground Users": str(
-            self.gu_number), "RCR": RCR, "Collision": collision}
+            len(self.gu)), "RCR": RCR, "Collision": collision}
