@@ -3,10 +3,10 @@ import random
 import torch
 import numpy as np
 
-Transition = namedtuple('Transition', ('states', 'actions', 'next_states', 'rewards', 'terminated'))
+Transition = namedtuple('Transition', ('states', 'actions', 'log_probs', 'rewards', 'terminated', 'values', 'advantages', 'returns'))
 
 
-class ReplayMemory(object):
+class ReplayMemoryPPO(object):
 
     def __init__(self, capacity):
         self.memory = deque([], maxlen=capacity)

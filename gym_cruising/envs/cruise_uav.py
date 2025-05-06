@@ -194,9 +194,11 @@ class CruiseUAV(Cruise):
             if sample <= self.disappear_gu_prob:
                 index_to_remove.append(i)
         index_to_remove = sorted(index_to_remove, reverse=True)
+        '''
         if index_to_remove != []:
             print("GU disappeared: ", index_to_remove)
             print("self.gu number: ", len(self.gu))
+        '''
         for index in index_to_remove:
             del self.gu[index]
 

@@ -41,6 +41,8 @@ def parse_args():
                         help="the wandb's project name")
     parser.add_argument("--wandb-entity", type=str, default="marcolbilli-universit-di-firenze",
                         help="the entity (team) of wandb's project")
+    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="if toggled, the training will be performed")
     
     '''
     # Agent specific arguments
@@ -120,6 +122,7 @@ def parse_args():
     parser.add_argument("--noise-psd", type=float, default=-174,
                         help="Power spectral density of noise in dBm/Hz")
     
+    #Clustered environment specific arguments
     parser.add_argument("--clustered", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, GU are clustered")
     parser.add_argument("--clusters-number", type=int, default=1,

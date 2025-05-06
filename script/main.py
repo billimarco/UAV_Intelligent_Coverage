@@ -23,7 +23,7 @@ from gym_cruising.neural_network.deep_Q_net import DeepQNet, DoubleDeepQNet
 from gym_cruising.neural_network.transformer_encoder_decoder import TransformerEncoderDecoder
 import gym_cruising.utils.runtime_utils as utils
 
-TRAIN = True
+TRAIN = False
 BATCH_SIZE = 256  # is the number of transitions random sampled from the replay buffer
 BETA = 0.005  # is the update rate of the target network
 GAMMA = 0.99  # Discount Factor
@@ -35,7 +35,7 @@ start_steps = 20000
 
 
 time_steps_done = 0
-optimization_steps = 3
+#optimization_steps = 3
 
 BEST_VALIDATION = 0.0
 MAX_LAST_RCR = 0.0
@@ -151,7 +151,50 @@ if __name__ == "__main__":
                     output = output * args.max_speed_uav
                     action.append(output)
             return action
+        
+        def process_state_batch(state_batch):
+            """
+            Estrae e converte le informazioni UAV e le posizioni dei GU connessi
+            da un batch di stati o stati successivi.
 
+            Args:
+                state_batch (list of np.ndarray): Lista di stati da elaborare.
+                optimization_steps (int): Numero di passi di ottimizzazione (usato per il reshape).
+                device (torch.device): Dispositivo PyTorch su cui caricare i tensori (es. "cuda" o "cpu").
+
+            Returns:
+                tuple: (uav_info_batch, connected_gu_positions_batch)
+                    - uav_info_batch: tensore di forma [batch_size, optimization_steps, 4]
+                    - connected_gu_positions_batch: tensore con padding [batch_size, max_gu, feature_dim]
+            """
+
+            uav_info_list = []
+            gu_pos_list = []
+
+            for array in state_batch:
+                uav_info, gu_positions = np.split(array, [args.max_uav_number * 2], axis=0)
+
+                # UAV info: reshape e conversione
+                uav_info = uav_info.reshape(args.max_uav_number, 4)
+                uav_info_tensor = torch.from_numpy(uav_info).float().to(device)
+                uav_info_list.append(uav_info_tensor)
+
+                # GU positions: conversione
+                gu_tensor = torch.from_numpy(gu_positions).float().to(device)
+                gu_pos_list.append(gu_tensor)
+
+            # Stack UAV info (dimensione fissa)
+            uav_info_batch = torch.stack(uav_info_list)
+
+            # Padding GU positions (dimensione variabile)
+            max_len = max(t.shape[0] for t in gu_pos_list)
+            padded_gu_pos = [
+                F.pad(t, (0, 0, 0, max_len - t.shape[0]), "constant", 0)
+                for t in gu_pos_list
+            ]
+            connected_gu_positions_batch = torch.stack(padded_gu_pos)
+
+            return uav_info_batch, connected_gu_positions_batch
 
         def optimize_model():
             global BATCH_SIZE
@@ -177,15 +220,17 @@ if __name__ == "__main__":
             next_states_batch = batch_uniform.next_states + batch_clustered.next_states
             terminated_batch = batch_uniform.terminated + batch_clustered.terminated
             terminated_batch = torch.tensor(terminated_batch, dtype=torch.float32).unsqueeze(1).to(device)
-
-            # prepare the batch of states
-            state_uav_info_batch = tuple(np.split(array, [optimization_steps * 2], axis=0)[0] for array in states_batch)
-            state_uav_info_batch = tuple(array.reshape(optimization_steps, 4) for array in state_uav_info_batch)
+            
+            '''
+            # prepare the batch of states UAV
+            state_uav_info_batch = tuple(np.split(array, [args.max_uav_number * 2], axis=0)[0] for array in states_batch)
+            state_uav_info_batch = tuple(array.reshape(args.max_uav_number, 4) for array in state_uav_info_batch)
             state_uav_info_batch = tuple(torch.from_numpy(array).float().to(device) for array in state_uav_info_batch)
             state_uav_info_batch = torch.stack(state_uav_info_batch)
 
+            # prepare the batch of states connected GU
             state_connected_gu_positions_batch = tuple(
-                np.split(array, [optimization_steps * 2], axis=0)[1] for array in states_batch)
+                np.split(array, [args.max_uav_number * 2], axis=0)[1] for array in states_batch)
             state_connected_gu_positions_batch = tuple(
                 torch.from_numpy(array).float().to(device) for array in state_connected_gu_positions_batch)
             max_len = max(tensor.shape[0] for tensor in state_connected_gu_positions_batch)
@@ -195,6 +240,7 @@ if __name__ == "__main__":
                 padded_tensor = F.pad(tensor, padding, "constant", 0)  # Padding con 0
                 padded_tensors.append(padded_tensor)
             state_connected_gu_positions_batch = torch.stack(padded_tensors)
+            
 
             # prepare the batch of next states
             next_state_uav_info_batch = tuple(
@@ -215,21 +261,25 @@ if __name__ == "__main__":
                 padded_tensor = F.pad(tensor, padding, "constant", 0)  # Padding con 0
                 padded_tensors.append(padded_tensor)
             next_state_connected_gu_positions_batch = torch.stack(padded_tensors)
+            '''
+            state_uav_info_batch, state_connected_gu_positions_batch = process_state_batch(states_batch)
 
+            next_state_uav_info_batch, next_state_connected_gu_positions_batch = process_state_batch(next_states_batch)
+            
             # get tokens from batch of states and next states
             with torch.no_grad():
                 tokens_batch_next_states_target = transformer_target(next_state_connected_gu_positions_batch,
-                                                                    next_state_uav_info_batch)  # [BATCH_SIZE, optimization_steps, EMBEDDED_DIM]
+                                                                    next_state_uav_info_batch)  # [BATCH_SIZE, args.max_number_uav, EMBEDDED_DIM]
                 tokens_batch_states_target = transformer_target(state_connected_gu_positions_batch,
-                                                                state_uav_info_batch)  # [BATCH_SIZE, optimization_steps, EMBEDDED_DIM]
+                                                                state_uav_info_batch)  # [BATCH_SIZE, args.max_number_uav, EMBEDDED_DIM]
             tokens_batch_states = transformer_policy(state_connected_gu_positions_batch,
-                                                    state_uav_info_batch)  # [BATCH_SIZE, optimization_steps, EMBEDDED_DIM]
+                                                    state_uav_info_batch)  # [BATCH_SIZE, args.max_number_uav, EMBEDDED_DIM]
 
             loss_Q = 0.0
             loss_policy = 0.0
             loss_transformer = 0.0
 
-            for i in range(optimization_steps):
+            for i in range(args.max_uav_number):
                 # index mask for not padded current uav in batch
                 index_mask = [
                     k for k, lista in enumerate(actions_batch)
@@ -241,18 +291,17 @@ if __name__ == "__main__":
                 # UPDATE Q-FUNCTION
                 with torch.no_grad():
                     # slice i-th UAV's tokens [masked_batch_size, 1, EMBEDDED_DIM]
-                    current_batch_tensor_tokens_next_states_target = tokens_batch_next_states_target[index_mask, i:i + 1,
-                                                                    :].squeeze(
-                        1)
+                    current_batch_tensor_tokens_next_states_target = tokens_batch_next_states_target[index_mask, i:i + 1,:].squeeze(1)
                     output_batch = mlp_target(current_batch_tensor_tokens_next_states_target)
+                    
                     # noise generation for target next states actions according to N(0,sigma)
                     noise = (torch.randn((masked_batch_size, 2)) * sigma).to(device)
+                    
                     # Clipping of noise
                     clipped_noise = torch.clip(noise, -c, c)
                     output_batch = torch.clip(output_batch + clipped_noise, -1.0, 1.0)
                     output_batch = output_batch * args.max_speed_uav  # actions batch for UAV i-th [masked_batch_size, 2]
-                    Q1_values_batch, Q2_values_batch = deep_Q_net_target(current_batch_tensor_tokens_next_states_target,
-                                                                        output_batch)
+                    Q1_values_batch, Q2_values_batch = deep_Q_net_target(current_batch_tensor_tokens_next_states_target, output_batch)
                     current_uav_rewards = rewards_batch[..., i]
                     current_y_batch = current_uav_rewards[index_mask] + GAMMA * (
                             1.0 - terminated_batch[index_mask]) * torch.min(Q1_values_batch,
@@ -260,15 +309,12 @@ if __name__ == "__main__":
                 # slice i-th UAV's tokens [masked_batch_size, 1, EMBEDDED_DIM]
                 current_batch_tensor_tokens_states = tokens_batch_states[index_mask, i:i + 1, :].squeeze(1)
                 # Concatenate i-th UAV's actions along the batch size [masked_batch_size, 2]
-                current_batch_actions = torch.cat(
-                    [action[i].unsqueeze(0) for action in actions_batch],
-                    dim=0).to(device)
-                Q1_values_batch, Q2_values_batch = deep_Q_net_policy(current_batch_tensor_tokens_states,
-                                                                    current_batch_actions[index_mask])
+                current_batch_actions = torch.cat([action[i].unsqueeze(0) for action in actions_batch], dim=0).to(device)
+                Q1_values_batch, Q2_values_batch = deep_Q_net_policy(current_batch_tensor_tokens_states, current_batch_actions[index_mask])
                 # criterion = nn.MSELoss()
                 criterion = torch.nn.HuberLoss()
                 # Optimize Deep Q Net
-                loss_Q += criterion(Q1_values_batch, current_y_batch) + criterion(Q2_values_batch, current_y_batch)
+                loss_Q = loss_Q + criterion(Q1_values_batch, current_y_batch) + criterion(Q2_values_batch, current_y_batch)
 
                 criterion = nn.MSELoss()
                 # UPDATE POLICY
@@ -276,15 +322,13 @@ if __name__ == "__main__":
                 current_batch_tensor_tokens_states_target = tokens_batch_states_target[index_mask, i:i + 1, :].squeeze(1)
                 output_batch = mlp_policy(current_batch_tensor_tokens_states_target)
                 output_batch = output_batch * args.max_speed_uav  # actions batch for UAV i-th [masked_batch_size, 2]
-                Q1_values_batch, Q2_values_batch = deep_Q_net_policy(current_batch_tensor_tokens_states_target,
-                                                                    output_batch)
-                loss_policy += -Q1_values_batch.mean()
-                loss_transformer += criterion(current_batch_tensor_tokens_states, current_batch_tensor_tokens_states_target)
+                Q1_values_batch, Q2_values_batch = deep_Q_net_policy(current_batch_tensor_tokens_states_target, output_batch)
+                loss_policy = loss_policy - Q1_values_batch.mean()
+                loss_transformer = loss_transformer + criterion(current_batch_tensor_tokens_states, current_batch_tensor_tokens_states_target)
 
             # log metrics to wandb
             wandb.log({"loss_Q": loss_Q, "loss_policy": loss_policy, "loss_transformer": loss_transformer})
 
-            '''
             optimizer_deep_Q.zero_grad()
             optimizer_transformer.zero_grad()
             loss_Q.backward(retain_graph=True)
@@ -302,52 +346,21 @@ if __name__ == "__main__":
                 optimizer_mlp.step()
 
                 soft_update_target_networks()
-            '''
-            total_loss = loss_Q + loss_policy + loss_transformer
 
-            optimizer_deep_Q.zero_grad()
-            optimizer_transformer.zero_grad()
-            optimizer_mlp.zero_grad()
-
-            total_loss.backward()
-
-            torch.nn.utils.clip_grad_norm_(deep_Q_net_policy.parameters(), 5)
-            torch.nn.utils.clip_grad_norm_(transformer_policy.parameters(), 5)
-            torch.nn.utils.clip_grad_norm_(mlp_policy.parameters(), 5)
-
-            optimizer_deep_Q.step()
-            optimizer_transformer.step()
-            optimizer_mlp.step()
-            
-            if time_steps_done % policy_delay == 0:
-                soft_update_target_networks()
-
-
+        def soft_update(policy_model, target_model, beta):
+            """
+            Esegue un soft update dei pesi del modello target verso il modello policy.
+            """
+            target_state_dict = target_model.state_dict()
+            policy_state_dict = policy_model.state_dict()
+            for key in policy_state_dict:
+                target_state_dict[key] = beta * policy_state_dict[key] + (1.0 - beta) * target_state_dict[key]
+            target_model.load_state_dict(target_state_dict)
 
         def soft_update_target_networks():
-            # Soft update of the target network's weights
-            # Q' = beta * Q + (1 - beta) * Q'
-            target_net_state_dict = transformer_target.state_dict()
-            policy_net_state_dict = transformer_policy.state_dict()
-            for key in policy_net_state_dict:
-                target_net_state_dict[key] = policy_net_state_dict[key] * BETA + target_net_state_dict[key] * (
-                        1 - BETA)
-            transformer_target.load_state_dict(target_net_state_dict)
-
-            target_net_state_dict = mlp_target.state_dict()
-            policy_net_state_dict = mlp_policy.state_dict()
-            for key in policy_net_state_dict:
-                target_net_state_dict[key] = policy_net_state_dict[key] * BETA + target_net_state_dict[key] * (
-                        1 - BETA)
-            mlp_target.load_state_dict(target_net_state_dict)
-
-            target_net_state_dict = deep_Q_net_target.state_dict()
-            policy_net_state_dict = deep_Q_net_policy.state_dict()
-            for key in policy_net_state_dict:
-                target_net_state_dict[key] = policy_net_state_dict[key] * BETA + target_net_state_dict[key] * (
-                        1 - BETA)
-            deep_Q_net_target.load_state_dict(target_net_state_dict)
-
+            soft_update(transformer_policy, transformer_target, BETA)
+            soft_update(mlp_policy, mlp_target, BETA)
+            soft_update(deep_Q_net_policy, deep_Q_net_target, BETA)
 
         def get_uniform_options():
             return ({
@@ -357,7 +370,6 @@ if __name__ == "__main__":
                 "clusters_number": 0,
                 "variance": 0
             })
-
 
         def get_clustered_options():
             variance = random.randint(args.clusters_variance_min, args.clusters_variance_max)
@@ -376,7 +388,6 @@ if __name__ == "__main__":
                 "clusters_number": clusters_number,
                 "variance": variance
             })
-
 
         def get_set_up():
             
@@ -404,7 +415,6 @@ if __name__ == "__main__":
                 actions.append(action_padding)
                 reward.append(0.)
             return state, next_state, actions, reward
-
 
         def validate():
             global BEST_VALIDATION
@@ -599,9 +609,9 @@ if __name__ == "__main__":
         transformer_policy = TransformerEncoderDecoder(embed_dim=EMBEDDED_DIM).to(device)
         mlp_policy = MLPPolicyNet(token_dim=EMBEDDED_DIM).to(device)
 
-        PATH_TRANSFORMER = './neural_network/bestTransformer.pth'
+        PATH_TRANSFORMER = '../neural_network/bestTransformer.pth'
         transformer_policy.load_state_dict(torch.load(PATH_TRANSFORMER))
-        PATH_MLP_POLICY = './neural_network/bestMLP.pth'
+        PATH_MLP_POLICY = '../neural_network/bestMLP.pth'
         mlp_policy.load_state_dict(torch.load(PATH_MLP_POLICY))
 
         options = ({

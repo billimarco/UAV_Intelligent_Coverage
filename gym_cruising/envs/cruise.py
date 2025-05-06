@@ -70,10 +70,6 @@ class Cruise(Env):
         pass
 
     @abstractmethod
-    def check_if_truncated(self) -> bool:
-        pass
-
-    @abstractmethod
     def calculate_reward(self, terminated):
         pass
 
