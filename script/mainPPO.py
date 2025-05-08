@@ -25,43 +25,273 @@ from gym_cruising.neural_network.PPO_net import PPONet
 import gym_cruising.utils.runtime_utils as utils
 
 
-global_step = 0
-
 BEST_VALIDATION = 0.0
 MAX_LAST_RCR = 0.0
 EMBEDDED_DIM = 32
 
-def generalized_advantage_estimation(rewards, dones, values, logprobs, actions, obs):
-    # Advantage computation
-    with torch.no_grad():
+def compute_gae(rewards, values, dones):
+    """
+    Calcola GAE (Generalized Advantage Estimation) in modo vettorializzato
+    per un singolo critic centralizzato, considerando più UAV.
+    
+    Args:
+        rewards: (num_envs, num_steps, max_uav_number) - Rewards per ogni UAV.
+        values: (num_envs, num_steps, 1) - Valori stimati per ogni stato (centralizzato).
+        dones: (num_envs, num_steps, 1) - Flag di terminazione per ogni ambiente.
+        
+    Returns:
+        advantages: (num_envs, num_steps, max_uav_number) - Advantages per ogni UAV.
+        returns: (num_envs, num_steps, max_uav_number) - Returns per ogni UAV.
+    """
+    num_envs, num_steps, max_uav = rewards.shape
 
-        next_value = agent.get_value(obs[-1]).reshape(1, -1)
-        if args.gae:
-            advantages = torch.zeros_like(rewards).to(device)
-            lastgaelam = 0
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
-                    nextnonterminal = ~ dones[-1]
-                    nextvalues = next_value
-                else:
-                    nextnonterminal = ~ dones[t + 1]
-                    nextvalues = values[t + 1]
-                delta = rewards[t] + args.gamma * nextvalues * nextnonterminal - values[t]
-                advantages[t] = lastgaelam = delta + args.gamma * args.gae_lambda * nextnonterminal * lastgaelam
-            returns = advantages + values
-        else:
-            returns = torch.zeros_like(rewards).to(device)
-            for t in reversed(range(args.num_steps)):
-                if t == args.num_steps - 1:
-                    nextnonterminal = ~ dones[-1]
-                    next_return = next_value
-                else:
-                    nextnonterminal = ~ dones[t + 1]
-                    next_return = returns[t + 1]
-                returns[t] = rewards[t] + args.gamma * nextnonterminal * next_return
-            advantages = returns - values
+    # Estendi values con bootstrap finale (valori a 0)
+    values_ext = torch.cat([
+        values, 
+        torch.zeros((num_envs, 1, 1), dtype=values.dtype, device=values.device)  # Aggiungi una colonna finale di zeri
+    ], dim=1)  # → (num_envs, num_steps + 1, 1)
 
+    advantages = torch.zeros_like(rewards)
+    gae = torch.zeros((num_envs, max_uav), dtype=rewards.dtype, device=rewards.device)
 
+    for t in reversed(range(num_steps)):
+        next_values = values_ext[:, t + 1, 0]  # Riduci la dimensione dell'ultimo asse
+        not_done = 1.0 - dones[:, t, 0].float()  # Il flag di fine episodio per tutti gli UAV
+        # Broadcasting per fare in modo che next_values e values abbiano la stessa forma di rewards
+        next_values = next_values.unsqueeze(-1).expand(-1, max_uav)  # Ora next_values ha forma (num_envs, max_uav)
+        values_current = values[:, t, 0].unsqueeze(-1).expand(-1, max_uav)  # Ora values ha forma (num_envs, max_uav)
+        # Calcola il delta (la differenza tra reward e value)
+        delta = rewards[:, t, :] + args.gamma * next_values * not_done - values_current
+        # Aggiorna GAE
+        gae = delta + args.gamma * args.gae_lambda * not_done * gae
+        # Salva le advantages calcolate
+        advantages[:, t, :] = gae
+
+    # I ritorni sono la somma delle advantages e dei valori
+    returns = advantages + values[:, :, 0].unsqueeze(-1).expand(-1, max_uav)  # Broadcasting per adattarsi a (num_envs, num_steps, max_uav)
+
+    return advantages, returns
+
+def add_reward_padding(rewards):
+    pad_count = args.max_uav_number - args.uav_number
+    if pad_count > 0:
+
+        # Costruisci padding come Tensor
+        reward_padding = torch.zeros(pad_count, dtype=rewards.dtype, device=rewards.device)
+
+        # Concatenazione Tensor
+        rewards = torch.cat([rewards, reward_padding], dim=0)
+
+    return rewards
+
+def add_padding(actions, reward, logprobs, values):
+    pad_count = args.max_uav_number - args.uav_number
+    if pad_count > 0:
+
+        # Costruisci padding come Tensor
+        action_padding = torch.full((pad_count, 2), 100.0, dtype=actions.dtype, device=actions.device)
+        reward_padding = torch.zeros(pad_count, dtype=reward.dtype, device=reward.device)
+        logprob_padding = torch.full((pad_count,), -1e8, dtype=logprobs.dtype, device=logprobs.device)
+        values_padding = torch.zeros(pad_count, dtype=values.dtype, device=values.device)
+
+        # Concatenazione Tensor
+        actions = torch.cat([actions, action_padding], dim=0)
+        reward = torch.cat([reward, reward_padding], dim=0)
+        logprobs = torch.cat([logprobs, logprob_padding], dim=0)
+        values = torch.cat([values, values_padding], dim=0)
+
+    return actions, reward, logprobs, values
+
+def process_state_batch(state_batch):
+    """
+    Estrae le info UAV e GU da un batch di stati e produce anche le maschere booleane.
+
+    Returns:
+        uav_info_batch: [B, max_uav, 4]
+        connected_gu_positions_batch: [B, max_gu, 2]
+        uav_mask: [B, max_uav] (True = reale, False = padding)
+        gu_mask: [B, max_gu]  (True = reale, False = padding)
+    """
+
+    uav_info_list = []
+    gu_pos_list = []
+    uav_masks = []
+    gu_masks = []
+    
+    # Padding per lo stato (in NumPy)
+    padding = np.array([[0., 0.]])
+
+    for array in state_batch:
+        # Applica padding allo stato (UAV*2 → max_UAV*2)
+        for i in range(args.uav_number * 2, args.max_uav_number * 2):
+            array = np.insert(array, i, padding, axis=0)
+            
+        uav_info, gu_positions = np.split(array, [args.max_uav_number * 2], axis=0)
+
+        # UAV info: reshape e conversione
+        uav_info = uav_info.reshape(args.max_uav_number, 4)
+        uav_info_tensor = torch.from_numpy(uav_info).float().to(device)
+        uav_info_list.append(uav_info_tensor)
+        
+        # UAV mask: True dove almeno un valore è non zero
+        uav_mask = (uav_info_tensor.abs().sum(dim=-1) > 0)
+        uav_masks.append(uav_mask)
+
+        # GU positions: conversione
+        gu_tensor = torch.from_numpy(gu_positions).float().to(device)
+        gu_pos_list.append(gu_tensor)
+        
+        # GU mask: True dove almeno un valore è non zero
+        gu_mask = (gu_tensor.abs().sum(dim=-1) > 0)
+        gu_masks.append(gu_mask)
+
+    # Stack UAV info (dimensione fissa)
+    uav_info_batch = torch.stack(uav_info_list)                 # [B, max_uav, 4]
+    uav_mask = torch.stack(uav_masks)                           # [B, max_uav]
+
+    # Padding GU positions (dimensione variabile)
+    max_gu = max(t.shape[0] for t in gu_pos_list)
+    padded_gu_pos = []
+    padded_gu_masks = []
+
+    for gu, mask in zip(gu_pos_list, gu_masks):
+        pad_len = max_gu - gu.shape[0]
+        padded_gu = F.pad(gu, (0, 0, 0, pad_len), value=0.0)
+        padded_mask = F.pad(mask, (0, pad_len), value=False)
+        padded_gu_pos.append(padded_gu)
+        padded_gu_masks.append(padded_mask)
+
+    connected_gu_positions_batch = torch.stack(padded_gu_pos)  # [B, max_gu, 2]
+    gu_mask = torch.stack(padded_gu_masks)                     # [B, max_gu]
+
+    return uav_info_batch, connected_gu_positions_batch, uav_mask, gu_mask
+
+def get_uniform_options():
+    return ({
+        "uav": args.uav_number,
+        "gu": args.starting_gu_number,
+        "clustered": False,
+        "clusters_number": 0,
+        "variance": 0
+    })
+
+def get_clustered_options():
+    variance = random.randint(args.clusters_variance_min, args.clusters_variance_max)
+
+    if args.uav_number == 1:
+        clusters_number = random.randint(args.clusters_number, args.clusters_number+1)
+    elif args.uav_number == 2:
+        clusters_number = random.randint(args.clusters_number*2, args.clusters_number*2+2)
+    else:
+        clusters_number = random.randint(args.clusters_number*3, args.clusters_number*3+3)
+
+    return ({
+        "uav": args.uav_number,
+        "gu": args.starting_gu_number,
+        "clustered": True,
+        "clusters_number": clusters_number,
+        "variance": variance
+    })
+
+def get_set_up():
+    
+    if args.uav_number == args.max_uav_number:
+        args.uav_number = 1
+    else:
+        args.uav_number += 1
+
+    sample = random.random()
+    if sample > 0.3:
+        options = get_clustered_options()
+    else:
+        options = get_uniform_options()
+
+    options = {
+        "uav": args.uav_number,
+        "gu": args.starting_gu_number,
+        "clustered": False,
+        "clusters_number": 0,
+        "variance": 0
+    }
+    return options
+
+def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0, args=None):
+    agent.eval()
+    total_rewards = []
+    rcr_values = []
+
+    for ep in range(num_episodes):
+        options = get_set_up()
+        state, _ = env.reset(seed=int(time.perf_counter()), options=options)
+        done = False
+        episode_reward = 0
+        last_rcr = 0
+
+        while not done:
+            # Estrazione e preprocessing dello stato
+            uav_info, connected_gu_positions = np.split(state, [options['uav'] * 2], axis=0)
+            uav_info = uav_info.reshape(options['uav'], 4)
+
+            uav_info_tensor = torch.tensor(uav_info, dtype=torch.float32).unsqueeze(0).to(device)
+            gu_pos_tensor = torch.tensor(connected_gu_positions, dtype=torch.float32).unsqueeze(0).to(device)
+
+            # Inference
+            with torch.no_grad():
+                actions, _, _, _ = agent(gu_pos_tensor, uav_info_tensor)
+
+            actions = actions.squeeze(0).cpu().numpy()
+            scaled_actions = actions * args.max_speed_uav
+
+            # Passaggio ambiente
+            state, reward, terminated, truncated, info = env.step(scaled_actions)
+            done = terminated or truncated
+            episode_reward += np.mean(reward)
+            if done:
+                last_rcr += float(info['RCR'])
+                break
+        
+        # Aggiungi l'RCR medio per l'episodio
+        rcr_values.append(last_rcr / (1 if done else 0))  # Media di RCR per episodio
+        total_rewards.append(episode_reward)
+        print(f"Episode {ep + 1}: reward = {episode_reward:.2f}, RCR = {last_rcr:.2f}")
+
+    # Statistiche
+    mean_reward = np.mean(total_rewards)
+    std_reward = np.std(total_rewards)
+    mean_rcr = np.mean(rcr_values)
+    std_rcr = np.std(rcr_values)
+
+    print(f"\nTest completed over {num_episodes} episodes.")
+    print(f"Average reward: {mean_reward:.2f} ± {std_reward:.2f}")
+    print(f"Average RCR : {mean_rcr:.2f} ± {std_rcr:.2f}")
+
+    # Logging su Weights & Biases
+    if wandb.run is not None:
+        wandb.log({
+            "test/mean_reward": mean_reward,
+            "test/std_reward": std_reward,
+            "test/mean_rcr": mean_rcr,
+            "test/std_rcr": std_rcr,
+        }, step=global_step)
+        
+    '''
+    if total_reward > BEST_VALIDATION:
+                BEST_VALIDATION = total_reward
+                # save the best validation nets
+                torch.save(transformer_policy.state_dict(), '../neural_network/rewardTransformer.pth')
+                torch.save(mlp_policy.state_dict(), '../neural_network/rewardMLP.pth')
+                torch.save(deep_Q_net_policy.state_dict(), '../neural_network/rewardDeepQ.pth')
+
+    if sum_last_rcr > MAX_LAST_RCR:
+        MAX_LAST_RCR = sum_last_rcr
+        # save the best validation nets
+        torch.save(transformer_policy.state_dict(), '../neural_network/maxTransformer.pth')
+        torch.save(mlp_policy.state_dict(), '../neural_network/maxMLP.pth')
+        torch.save(deep_Q_net_policy.state_dict(), '../neural_network/maxDeepQ.pth')
+    '''
+
+    return mean_reward, std_reward
+    
 if __name__ == "__main__":
     args = utils.parse_args()
 
@@ -90,12 +320,26 @@ if __name__ == "__main__":
                 monitor_gym=True,
                 save_code=True
             )
+            wandb.define_metric("test/mean_reward", step_metric="global_step")
+            wandb.define_metric("test/std_reward", step_metric="global_step")
+            wandb.define_metric("test/mean_rcr", step_metric="global_step")
+            wandb.define_metric("test/std_rcr", step_metric="global_step")
+            wandb.define_metric("charts/learning_rate", step_metric="global_step")
+            wandb.define_metric("losses/value_loss", step_metric="global_step")
+            wandb.define_metric("losses/policy_loss", step_metric="global_step")
+            wandb.define_metric("losses/entropy", step_metric="global_step")
+            wandb.define_metric("losses/old_approx_kl", step_metric="global_step")
+            wandb.define_metric("losses/approx_kl", step_metric="global_step")
+            wandb.define_metric("losses/clipfrac", step_metric="global_step")
+            wandb.define_metric("losses/explained_variance", step_metric="global_step")
+            wandb.define_metric("charts/SPS", step_metric="global_step")
 
 
         env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='rgb_array')
-        env.reset(args.seed)
 
         ppo_net = PPONet(embed_dim=EMBEDDED_DIM).to(device)
+        
+        optimizer = optim.Adam(ppo_net.parameters(), lr=args.learning_rate, weight_decay=1e-5)
         
         replay_buffer = ReplayMemoryPPO(args.batch_size)
         
@@ -105,89 +349,135 @@ if __name__ == "__main__":
         for update in range(0, args.updates_per_env):
 
             if update % 20 == 0 and update % args.updates_per_env != 0:
+                print("\n<------------------------->")
+                print(f"Testing at update {update}")
                 test_time = time.time()
-                test(agent, test_envs, tasks, global_step)#TODO try
+                test(agent=ppo_net, env=env, num_episodes=12, device=device, global_step=global_step, args=args)
                 print(f"Tested! Time elaplesed {time.time() - test_time}")
-                print()
+                print("<------------------------->\n")
                 start_time = time.time()
-
-            episode_rewards = np.zeros(args.num_envs)
-            episode_lenghts = np.zeros(args.num_envs)
-
-            episode_step = np.zeros(args.num_envs)
             
-            replay_buffer.clear()
+            if args.anneal_lr:
+                frac = 1.0 - (update - 1.0) / args.updates_per_env
+                lrnow = frac * args.learning_rate
+                optimizer.param_groups[0]["lr"] = lrnow
+
+            # Buffer temporanei per un singolo episodio/rollout
+            states_list = []
+            actions_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number, 2), dtype=torch.float32).to(device)
+            log_probs_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.float32).to(device)
+            rewards_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.float32).to(device)
+            dones_tensor = torch.zeros((args.num_envs, args.num_steps, 1), dtype=torch.bool).to(device)
+            values_tensor = torch.zeros((args.num_envs, args.num_steps, 1), dtype=torch.float32).to(device)
+
             # Rollout
             for i in range(args.num_envs):
                 options = get_set_up()
                 state, info = env.reset(seed=int(time.perf_counter()), options=options)
-                # Rollout
                 for step in range(args.num_steps):
                     global_step += 1
+
+                    uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
                     
-                    # Estrai stato
-                    uav_info, connected_gu_positions = np.split(state, [options['uav'] * 2], axis=0)
-                    uav_info = uav_info.reshape(options['uav'], 4)
-
-                    # Converti in tensori
-                    uav_info = torch.from_numpy(uav_info).float().to(device)
-                    connected_gu_positions = torch.from_numpy(connected_gu_positions).float().to(device)
-
                     # Ottieni azioni da PPO
                     with torch.no_grad():
                         actions, logprobs, entropy, values = ppo_net(
-                            connected_gu_positions.unsqueeze(0),  # shape: (1, GU, 2)
-                            uav_info.unsqueeze(0)                 # shape: (1, UAV, 4)
+                            uav_info,                  # shape: (1, UAV, 4)    
+                            connected_gu_positions,    # shape: (1, GU, 2)
+                            uav_mask,                  # shape: (1, UAV)
+                            gu_mask                    # shape: (1, GU)
                         )
 
                     # Rimuovi batch dim
-                    actions = actions.squeeze(0).cpu().numpy()      # shape: (UAV, 2)
-                    logprobs = logprobs.squeeze(0).cpu().numpy()    # shape: (UAV,)
-                    values = values.item()                          # scalare, valore globale dello stato
+                    actions = actions.squeeze(0)     # shape: (UAV, 2)
+                    logprobs = logprobs.squeeze(0)    # shape: (UAV,)
+                    values = values.squeeze(0)        # shape: (1,)
+
 
                     # Applica max speed scaling
                     scaled_actions = actions * args.max_speed_uav   # (UAV, 2)
-
-                    next_state, reward, terminated, truncated, _ = env.step(actions)
-                    # TODO: FERMO QUI
-                    # Store the transition in memory
-                    state_padding, next_state_padding, actions_padding, reward_padding = add_padding(state, next_state, scaled_actions,
-                                                                                                reward,
-                                                                                                options['uav'])
-                    replay_buffer.push(state_padding, actions_padding, next_state_padding, reward_padding,
-                                            int(terminated))
-                    state = next_state
                     
+                    real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
+                    
+                    next_state, reward, terminated, truncated, _ = env.step(real_actions.cpu().numpy())
+                    
+                    reward = torch.tensor(reward).to(device)
+                    terminated = torch.tensor(terminated).to(device)
+                    # Store the transition in memory
+                    rewards = add_reward_padding(reward)
+                    
+                    # Memorizza i dati nel buffer temporaneo
+                    states_list.append(state)
+                    actions_tensor[i, step, :, :] = actions
+                    log_probs_tensor[i, step, :] = logprobs
+                    rewards_tensor[i, step, :] = rewards
+                    dones_tensor[i, step, :] = terminated
+                    values_tensor[i, step, :] = values
+
+                    state = next_state
             
+            #TODO Con critic centralizzato bisogna calcolare gli advantages e i returns per ogni UAV        
+            # Calcolare gli advantages e i returns usando GAE
+            advantages_tensor, returns_tensor = compute_gae(
+                rewards=rewards_tensor,
+                values=values_tensor,
+                dones=dones_tensor
+            )
 
-            generalized_advantage_estimation(rewards, dones, values, logprobs, actions, obs)
+            
+            # Supponiamo che le variabili siano già definite con shape (num_envs, num_steps, ...)
 
-            # Flatten batch
-            b_obs = obs.reshape((-1,) + envs.observation_space.shape)
-            b_logprobs = logprobs.reshape(-1)
-            b_actions = actions.reshape((-1,) + envs.action_space.shape)
-            b_advantages = advantages.reshape(-1)
-            b_returns = returns.reshape(-1)
-            b_values = values.reshape(-1)
+            # Flatten (num_envs, num_steps, ...) → (B, ...)
+            flat_actions = actions_tensor.reshape(args.batch_size, args.max_uav_number, 2)
+            flat_log_probs = log_probs_tensor.reshape(args.batch_size, args.max_uav_number)
+            flat_rewards = rewards_tensor.reshape(args.batch_size, args.max_uav_number)
+            flat_dones = dones_tensor.reshape(args.batch_size, args.max_uav_number)
+            flat_values = values_tensor.reshape(args.batch_size, args.max_uav_number)
+            flat_advantages = advantages_tensor.reshape(args.batch_size, args.max_uav_number)
+            flat_returns = returns_tensor.reshape(args.batch_size, args.max_uav_number)
 
-            # Optimize policy and value networks
-            b_inds = np.arange(args.batch_size)
             clipfracs = []
 
             for epoch in range(args.update_epochs):
-                np.random.shuffle(b_inds)
+                b_inds = torch.randperm(args.batch_size, device=device)
                 for start in range(0, args.batch_size, args.minibatch_size):
                     end = start + args.minibatch_size
                     mb_inds = b_inds[start:end]
-                    
-                    transitions_uniform = replay_buffer_uniform.get_minibatch(mb_inds)
-                    # This converts batch-arrays of Transitions to Transition of batch-arrays.
-                    batch_uniform = Transition(*zip(*transitions_uniform))
 
-                    _, newlogprob, entropy, newvalue = agent.get_action_and_value(
-                        b_obs[mb_inds], b_actions.long()[mb_inds]
-                    )
-                    logratio = newlogprob - b_logprobs[mb_inds]
+                    mb_states = [states_list[i] for i in mb_inds.tolist()]     # [MB, ...]
+                    mb_actions = flat_actions[mb_inds]                    # [MB, UAV, 2]
+                    mb_logprobs = flat_log_probs[mb_inds]                 # [MB, UAV]
+                    mb_rewards = flat_rewards[mb_inds]                    # [MB, UAV]
+                    mb_dones = flat_dones[mb_inds].unsqueeze(-1)          # [MB, 1]
+                    mb_values = flat_values[mb_inds]                      # [MB, UAV]
+                    mb_advantages = flat_advantages[mb_inds]              # [MB, UAV]
+                    mb_returns = flat_returns[mb_inds]                    # [MB, UAV]
+
+                    # Estrai info di stato UAV/GU
+                    mb_state_uav, mb_state_connected_gu = process_state_batch(mb_states)
+
+                    # Forward della rete
+                    mb_state_tokens = ppo_net.backbone_forward(mb_state_connected_gu, mb_state_uav)
+                    
+                    # Valore utilizzato per il padding (assumendo che sia 100.0 per mb_actions)
+                    padding_logprob = -1e8
+
+                    # Crea una maschera booleana che indica i droni reali (True per UAV reali, False per UAV fittizi)
+                    mb_index_mask = (mb_logprobs != padding_logprob)  # La maschera è True per i droni reali
+
+                    mb_masked_size = len(mb_index_mask)
+
+                    # slice i-th UAV's tokens [masked_batch_size, 1, EMBEDDED_DIM]
+                    mb_masked_state_tokens = mb_state_tokens[mb_index_mask]
+                    mb_logprobs_masked = mb_logprobs[mb_index_mask]          # Maschera su logprobs
+                    mb_rewards_masked = mb_rewards[mb_index_mask]            # Maschera su rewards
+                    mb_dones_masked = mb_dones[mb_index_mask]                # Maschera su dones
+                    mb_values_masked = mb_values[mb_index_mask]              # Maschera su values
+                    mb_advantages_masked = mb_advantages[mb_index_mask]      # Maschera su advantages
+                    mb_returns_masked = mb_returns[mb_index_mask]            # Maschera su returns
+                
+                    _, newlogprob, entropy, newvalue = ppo_net.get_action_and_value(mb_masked_state_tokens)
+                    logratio = newlogprob - mb_logprobs_masked
                     ratio = logratio.exp()
 
                     with torch.no_grad():
@@ -195,646 +485,67 @@ if __name__ == "__main__":
                         approx_kl = ((ratio - 1) - logratio).mean()
                         clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
-                    mb_advantages = b_advantages[mb_inds]
-                    if args.norm_adv:
-                        mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
                     # Policy loss
-                    pg_loss1 = -mb_advantages * ratio
-                    pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+                    pg_loss1 = -mb_advantages_masked * ratio
+                    pg_loss2 = -mb_advantages_masked * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
                     pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                     # Value loss
                     newvalue = newvalue.view(-1)
                     if args.clip_vloss:
-                        v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
-                        v_clipped = b_values[mb_inds] + torch.clamp(
-                            newvalue - b_values[mb_inds],
+                        v_loss_unclipped = (newvalue - mb_returns_masked) ** 2
+                        v_clipped = mb_values_masked + torch.clamp(
+                            newvalue - mb_values_masked,
                             -args.clip_coef,
                             args.clip_coef,
                         )
-                        v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+                        v_loss_clipped = (v_clipped - mb_returns_masked) ** 2
                         v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                         v_loss = 0.5 * v_loss_max.mean()
                     else:
-                        v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
+                        v_loss = 0.5 * ((newvalue - mb_returns_masked) ** 2).mean()
 
                     entropy_loss = entropy.mean()
-                    loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
-
-                    if args.ewc:
-                        ewc_loss = ewc.compute_ewc_loss()
-                        loss += ewc_loss
+                    total_loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
                     optimizer.zero_grad()
-                    loss.backward()
-                    nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+                    total_loss.backward()
+                    nn.utils.clip_grad_norm_(ppo_net.parameters(), args.max_grad_norm)
                     optimizer.step()
-                    if args.s_p:
-                        shrink_perturb(agent)
-                        
-                if args.target_kl is not None and approx_kl > args.target_kl:
-                    break
 
+            # Valore utilizzato per il padding (assumendo che sia 100.0 per mb_actions)
+            padding_logprob = -1e8
+            # Crea una maschera booleana che indica i droni reali (True per UAV reali, False per UAV fittizi)
+            b_index_mask = (flat_log_probs != padding_logprob)  # La maschera è True per i droni reali
             # Log training metrics
-            y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
+            y_pred, y_true = flat_values[b_index_mask].cpu().numpy(), flat_returns[b_index_mask].cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+            
+            wandb.log({
+                "charts/learning_rate": optimizer.param_groups[0]["lr"],
+                "losses/value_loss": v_loss.item(),
+                "losses/policy_loss": pg_loss.item(),
+                "losses/entropy": entropy_loss.item(),
+                "losses/old_approx_kl": old_approx_kl.item(),
+                "losses/approx_kl": approx_kl.item(),
+                "losses/clipfrac": np.mean(clipfracs),
+                "losses/explained_variance": explained_var,
+                "charts/SPS": int(global_step / (time.time() - start_time)),
+            }, step=global_step)
 
-            if args.ewc:
-                writer.add_scalar("losses/ewc", ewc_loss.item(), global_step)
-                writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-                writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-                writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
-                writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
-                writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
-                writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
-                writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-                writer.add_scalar("losses/explained_variance", explained_var, global_step)
-            # print("SPS:", int(global_step / (time.time() - start_time)))
-            writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
-
-            test(agent, test_envs, tasks, global_step, True, True)
-
-
-        def select_actions_epsilon(state, uav_number):
-            uav_info, connected_gu_positions = np.split(state, [uav_number * 2], axis=0)
-            uav_info = uav_info.reshape(uav_number, 4)
-            uav_info = torch.from_numpy(uav_info).float().to(device)
-            connected_gu_positions = torch.from_numpy(connected_gu_positions).float().to(device)
-            action = []
-            with torch.no_grad():
-                tokens = transformer_policy(connected_gu_positions.unsqueeze(0), uav_info.unsqueeze(0)).squeeze(0)
-            global_step += 1
-            for i in range(uav_number):
-                if global_step < start_steps:
-                    output = np.random.uniform(low=-1.0, high=1.0, size=2)
-                    output = output * args.max_speed_uav
-                    action.append(output)
-                else:
-                    with torch.no_grad():
-                        # return action according to MLP [vx, vy] + epsilon noise
-                        output = mlp_policy(tokens[i])
-                        output = output + (torch.randn(2) * sigma_policy).to(
-                            device)
-                        output = torch.clip(output, -1.0, 1.0)
-                        output = output.cpu().numpy().reshape(2)
-                        output = output * args.max_speed_uav
-                        action.append(output)
-            return action
+        test(agent=ppo_net, env=env, num_episodes=12, device=device, global_step=global_step, args=args)
         
-        def select_actions(state, uav_number):
-            uav_info, connected_gu_positions = np.split(state, [uav_number * 2], axis=0)
-            uav_info = uav_info.reshape(uav_number, 4)
-            uav_info = torch.from_numpy(uav_info).float().to(device)
-            connected_gu_positions = torch.from_numpy(connected_gu_positions).float().to(device)
-            action = []
-            with torch.no_grad():
-                tokens = transformer_policy(connected_gu_positions.unsqueeze(0), uav_info.unsqueeze(0)).squeeze(0)
-            for i in range(uav_number):
-                with torch.no_grad():
-                    # return action according to MLP [vx, vy]
-                    output = mlp_policy(tokens[i])
-                    output = output.cpu().numpy().reshape(2)
-                    output = output * args.max_speed_uav
-                    action.append(output)
-            return action
         
-        def process_state_batch(state_batch):
-            """
-            Estrae e converte le informazioni UAV e le posizioni dei GU connessi
-            da un batch di stati o stati successivi.
-
-            Args:
-                state_batch (list of np.ndarray): Lista di stati da elaborare.
-                optimization_steps (int): Numero di passi di ottimizzazione (usato per il reshape).
-                device (torch.device): Dispositivo PyTorch su cui caricare i tensori (es. "cuda" o "cpu").
-
-            Returns:
-                tuple: (uav_info_batch, connected_gu_positions_batch)
-                    - uav_info_batch: tensore di forma [batch_size, optimization_steps, 4]
-                    - connected_gu_positions_batch: tensore con padding [batch_size, max_gu, feature_dim]
-            """
-
-            uav_info_list = []
-            gu_pos_list = []
-
-            for array in state_batch:
-                uav_info, gu_positions = np.split(array, [args.max_uav_number * 2], axis=0)
-
-                # UAV info: reshape e conversione
-                uav_info = uav_info.reshape(args.max_uav_number, 4)
-                uav_info_tensor = torch.from_numpy(uav_info).float().to(device)
-                uav_info_list.append(uav_info_tensor)
-
-                # GU positions: conversione
-                gu_tensor = torch.from_numpy(gu_positions).float().to(device)
-                gu_pos_list.append(gu_tensor)
-
-            # Stack UAV info (dimensione fissa)
-            uav_info_batch = torch.stack(uav_info_list)
-
-            # Padding GU positions (dimensione variabile)
-            max_len = max(t.shape[0] for t in gu_pos_list)
-            padded_gu_pos = [
-                F.pad(t, (0, 0, 0, max_len - t.shape[0]), "constant", 0)
-                for t in gu_pos_list
-            ]
-            connected_gu_positions_batch = torch.stack(padded_gu_pos)
-
-            return uav_info_batch, connected_gu_positions_batch
-
-        def optimize_model():
-            global BATCH_SIZE
-            torch.autograd.set_detect_anomaly(True)
-
-            if len(replay_buffer_uniform) < 5000 or len(replay_buffer_clustered) < 5000:
-                return
-
-            transitions_uniform = replay_buffer_uniform.sample(int(BATCH_SIZE / 2))
-            # This converts batch-arrays of Transitions to Transition of batch-arrays.
-            batch_uniform = Transition(*zip(*transitions_uniform))
-
-            transitions_clustered = replay_buffer_clustered.sample(int(BATCH_SIZE / 2))
-            # This converts batch-arrays of Transitions to Transition of batch-arrays.
-            batch_clustered = Transition(*zip(*transitions_clustered))
-
-            states_batch = batch_uniform.states + batch_clustered.states
-            actions_batch = batch_uniform.actions + batch_clustered.actions
-            actions_batch = tuple(
-                [torch.tensor(array, dtype=torch.float32) for array in sublist] for sublist in actions_batch)
-            rewards_batch = batch_uniform.rewards + batch_clustered.rewards
-            rewards_batch = torch.tensor(rewards_batch, dtype=torch.float32).unsqueeze(1).to(device)
-            next_states_batch = batch_uniform.next_states + batch_clustered.next_states
-            terminated_batch = batch_uniform.terminated + batch_clustered.terminated
-            terminated_batch = torch.tensor(terminated_batch, dtype=torch.float32).unsqueeze(1).to(device)
-            
-            state_uav_info_batch, state_connected_gu_positions_batch = process_state_batch(states_batch)
-
-            next_state_uav_info_batch, next_state_connected_gu_positions_batch = process_state_batch(next_states_batch)
-            
-            # get tokens from batch of states and next states
-            with torch.no_grad():
-                tokens_batch_next_states_target = transformer_target(next_state_connected_gu_positions_batch,
-                                                                    next_state_uav_info_batch)  # [BATCH_SIZE, args.max_number_uav, EMBEDDED_DIM]
-                tokens_batch_states_target = transformer_target(state_connected_gu_positions_batch,
-                                                                state_uav_info_batch)  # [BATCH_SIZE, args.max_number_uav, EMBEDDED_DIM]
-            tokens_batch_states = transformer_policy(state_connected_gu_positions_batch,
-                                                    state_uav_info_batch)  # [BATCH_SIZE, args.max_number_uav, EMBEDDED_DIM]
-
-            loss_Q = 0.0
-            loss_policy = 0.0
-            loss_transformer = 0.0
-
-            for i in range(args.max_uav_number):
-                # index mask for not padded current uav in batch
-                index_mask = [
-                    k for k, lista in enumerate(actions_batch)
-                    if not torch.equal(lista[i], torch.tensor([100., 100.]))
-                ]
-
-                masked_batch_size = len(index_mask)
-
-                # UPDATE Q-FUNCTION
-                with torch.no_grad():
-                    # slice i-th UAV's tokens [masked_batch_size, 1, EMBEDDED_DIM]
-                    current_batch_tensor_tokens_next_states_target = tokens_batch_next_states_target[index_mask, i:i + 1,:].squeeze(1)
-                    output_batch = mlp_target(current_batch_tensor_tokens_next_states_target)
-                    
-                    # noise generation for target next states actions according to N(0,sigma)
-                    noise = (torch.randn((masked_batch_size, 2)) * sigma).to(device)
-                    
-                    # Clipping of noise
-                    clipped_noise = torch.clip(noise, -c, c)
-                    output_batch = torch.clip(output_batch + clipped_noise, -1.0, 1.0)
-                    output_batch = output_batch * args.max_speed_uav  # actions batch for UAV i-th [masked_batch_size, 2]
-                    Q1_values_batch, Q2_values_batch = deep_Q_net_target(current_batch_tensor_tokens_next_states_target, output_batch)
-                    current_uav_rewards = rewards_batch[..., i]
-                    current_y_batch = current_uav_rewards[index_mask] + GAMMA * (
-                            1.0 - terminated_batch[index_mask]) * torch.min(Q1_values_batch,
-                                                                            Q2_values_batch)
-                # slice i-th UAV's tokens [masked_batch_size, 1, EMBEDDED_DIM]
-                current_batch_tensor_tokens_states = tokens_batch_states[index_mask, i:i + 1, :].squeeze(1)
-                # Concatenate i-th UAV's actions along the batch size [masked_batch_size, 2]
-                current_batch_actions = torch.cat([action[i].unsqueeze(0) for action in actions_batch], dim=0).to(device)
-                Q1_values_batch, Q2_values_batch = deep_Q_net_policy(current_batch_tensor_tokens_states, current_batch_actions[index_mask])
-                # criterion = nn.MSELoss()
-                criterion = torch.nn.HuberLoss()
-                # Optimize Deep Q Net
-                loss_Q = loss_Q + criterion(Q1_values_batch, current_y_batch) + criterion(Q2_values_batch, current_y_batch)
-
-                criterion = nn.MSELoss()
-                # UPDATE POLICY
-                # slice i-th UAV's tokens [masked_batch_size, 1, EMBEDDED_DIM]
-                current_batch_tensor_tokens_states_target = tokens_batch_states_target[index_mask, i:i + 1, :].squeeze(1)
-                output_batch = mlp_policy(current_batch_tensor_tokens_states_target)
-                output_batch = output_batch * args.max_speed_uav  # actions batch for UAV i-th [masked_batch_size, 2]
-                Q1_values_batch, Q2_values_batch = deep_Q_net_policy(current_batch_tensor_tokens_states_target, output_batch)
-                loss_policy = loss_policy - Q1_values_batch.mean()
-                loss_transformer = loss_transformer + criterion(current_batch_tensor_tokens_states, current_batch_tensor_tokens_states_target)
-
-            # log metrics to wandb
-            wandb.log({"loss_Q": loss_Q, "loss_policy": loss_policy, "loss_transformer": loss_transformer})
-
-            optimizer_deep_Q.zero_grad()
-            optimizer_transformer.zero_grad()
-            loss_Q.backward(retain_graph=True)
-            torch.nn.utils.clip_grad_norm_(deep_Q_net_policy.parameters(), 5)  # clip_grad_value_
-            torch.nn.utils.clip_grad_norm_(transformer_policy.parameters(), 5)  # clip_grad_value_
-            optimizer_deep_Q.step()
-            # Optimize Transformer Net
-            optimizer_transformer.step()
-
-            if global_step % policy_delay == 0:
-                # Optimize Policy Net MLP
-                optimizer_mlp.zero_grad()
-                loss_policy.backward()
-                torch.nn.utils.clip_grad_norm_(mlp_policy.parameters(), 5)  # clip_grad_value_
-                optimizer_mlp.step()
-
-                soft_update_target_networks()
-
-        def soft_update(policy_model, target_model, beta):
-            """
-            Esegue un soft update dei pesi del modello target verso il modello policy.
-            """
-            target_state_dict = target_model.state_dict()
-            policy_state_dict = policy_model.state_dict()
-            for key in policy_state_dict:
-                target_state_dict[key] = beta * policy_state_dict[key] + (1.0 - beta) * target_state_dict[key]
-            target_model.load_state_dict(target_state_dict)
-
-        def soft_update_target_networks():
-            soft_update(transformer_policy, transformer_target, BETA)
-            soft_update(mlp_policy, mlp_target, BETA)
-            soft_update(deep_Q_net_policy, deep_Q_net_target, BETA)
-
-        def get_uniform_options():
-            return ({
-                "uav": args.uav_number,
-                "gu": args.starting_gu_number,
-                "clustered": False,
-                "clusters_number": 0,
-                "variance": 0
-            })
-
-        def get_clustered_options():
-            variance = random.randint(args.clusters_variance_min, args.clusters_variance_max)
-
-            if args.uav_number == 1:
-                clusters_number = random.randint(args.clusters_number, args.clusters_number+1)
-            elif args.uav_number == 2:
-                clusters_number = random.randint(args.clusters_number*2, args.clusters_number*2+2)
-            else:
-                clusters_number = random.randint(args.clusters_number*3, args.clusters_number*3+3)
-
-            return ({
-                "uav": args.uav_number,
-                "gu": args.starting_gu_number,
-                "clustered": True,
-                "clusters_number": clusters_number,
-                "variance": variance
-            })
-
-        def get_set_up():
-            
-            if args.uav_number == args.max_uav_number:
-                args.uav_number = 1
-            else:
-                args.uav_number += 1
-
-            sample = random.random()
-            if sample > 0.3:
-                options = get_clustered_options()
-            else:
-                options = get_uniform_options()
-
-            return options
-
-
-        def add_padding(state, next_state, actions, reward, uav_number):
-            padding = np.array([[0., 0.]])
-            action_padding = [100., 100.]
-            for i in range(args.uav_number*2, args.max_uav_number*2):
-                state = np.insert(state, i, padding, axis=0)
-                next_state = np.insert(next_state, i, padding, axis=0)
-            for i in range(args.uav_number, args.max_uav_number):
-                actions.append(action_padding)
-                reward.append(0.)
-            return state, next_state, actions, reward
-
-
-        def validate():
-            global BEST_VALIDATION
-            global MAX_LAST_RCR
-            reward_sum_uniform = 0.0
-            reward_sum_clustered = 0.0
-            sum_last_rcr = 0.0
-            
-            options = ({
-                       "uav": 1,
-                       "gu": 30,
-                       "clustered": True,
-                       "clusters_number": 1,
-                       "variance": 100000
-                   },
-                   {
-                       "uav": 2,
-                       "gu": 60,
-                       "clustered": True,
-                       "clusters_number": 2,
-                       "variance": 100000
-                   },
-                   {
-                       "uav": 3,
-                       "gu": 90,
-                       "clustered": True,
-                       "clusters_number": 3,
-                       "variance": 100000
-                   })
-
-            seeds = [42, 751, 853]
-            for i, seed in enumerate(seeds):
-                np.random.seed(seed)
-                state, info = env.reset(seed=seed, options=options[i])
-                steps = 1
-                while True:
-                    actions = select_actions(state, options[i]['uav'])
-                    next_state, reward, terminated, truncated, info = env.step(actions)
-                    reward_sum_clustered += sum(reward)
-
-                    if steps == 300:
-                        truncated = True
-                    done = terminated or truncated
-
-                    state = next_state
-                    steps += 1
-
-                    if done:
-                        sum_last_rcr += float(info['RCR'])
-                        break
-
-            wandb.log({"reward_clustered": reward_sum_clustered})
-            
-            options = ({
-                       "uav": 1,
-                       "gu": 30,
-                       "clustered": False,
-                       "clusters_number": 0,
-                       "variance": 0
-                   },
-                   {
-                       "uav": 2,
-                       "gu": 60,
-                       "clustered": False,
-                       "clusters_number": 0,
-                       "variance": 0
-                   },
-                   {
-                       "uav": 3,
-                       "gu": 90,
-                       "clustered": False,
-                       "clusters_number": 0,
-                       "variance": 0
-                   })
-
-            seeds = [54321, 1181, 3475]
-            for i, seed in enumerate(seeds):
-                np.random.seed(seed)
-                state, info = env.reset(seed=seed, options=options[i])
-                steps = 1
-                while True:
-                    actions = select_actions(state, options[i]['uav'])
-                    next_state, reward, terminated, truncated, info = env.step(actions)
-                    reward_sum_uniform += sum(reward)
-
-                    if steps == 300:
-                        truncated = True
-                    done = terminated or truncated
-
-                    state = next_state
-                    steps += 1
-
-                    if done:
-                        sum_last_rcr += float(info['RCR'])
-                        break
-
-            wandb.log({"reward_uniform": reward_sum_uniform})
-            wandb.log({"max_rcr": sum_last_rcr})
-
-            total_reward = reward_sum_clustered + reward_sum_uniform
-
-            if total_reward > BEST_VALIDATION:
-                BEST_VALIDATION = total_reward
-                # save the best validation nets
-                torch.save(transformer_policy.state_dict(), '../neural_network/rewardTransformer.pth')
-                torch.save(mlp_policy.state_dict(), '../neural_network/rewardMLP.pth')
-                torch.save(deep_Q_net_policy.state_dict(), '../neural_network/rewardDeepQ.pth')
-
-            if sum_last_rcr > MAX_LAST_RCR:
-                MAX_LAST_RCR = sum_last_rcr
-                # save the best validation nets
-                torch.save(transformer_policy.state_dict(), '../neural_network/maxTransformer.pth')
-                torch.save(mlp_policy.state_dict(), '../neural_network/maxMLP.pth')
-                torch.save(deep_Q_net_policy.state_dict(), '../neural_network/maxDeepQ.pth')
-
-    
-        if torch.cuda.is_available():
-            num_episodes = 8000
-        else:
-            num_episodes = 100
-
-        print("START UAV COOPERATIVE COVERAGE TRAINING")
-
-        for i_episode in range(0, num_episodes, 1):
-            print("Episode: ", i_episode)
-            options = get_set_up()
-            state, info = env.reset(seed=int(time.perf_counter()), options=options)
-            steps = 1
-            while True:
-                actions = select_actions_epsilon(state, options['uav'])
-                next_state, reward, terminated, truncated, _ = env.step(actions)
-
-                if steps == 300:
-                    truncated = True
-                done = terminated or truncated
-
-                # Store the transition in memory
-                state_padding, next_state_padding, actions_padding, reward_padding = add_padding(state, next_state, actions,
-                                                                                                reward,
-                                                                                                options['uav'])
-                if not options['clustered']:
-                    replay_buffer_uniform.push(state_padding, actions_padding, next_state_padding, reward_padding,
-                                            int(terminated))
-                else:
-                    replay_buffer_clustered.push(state_padding, actions_padding, next_state_padding, reward_padding,
-                                                int(terminated))
-
-                # Move to the next state
-                state = next_state
-                # Perform one step of the optimization
-                optimize_model()
-                steps += 1
-
-                if done:
-                    break
-
-            if len(replay_buffer_uniform) >= 5000 and len(replay_buffer_clustered) >= 5000:
-                validate()
-
-        # save the nets
-        torch.save(transformer_policy.state_dict(), '../neural_network/lastTransformer.pth')
-        torch.save(mlp_policy.state_dict(), '../neural_network/lastMLP.pth')
-        torch.save(deep_Q_net_policy.state_dict(), '../neural_network/lastDeepQ.pth')
-
-        wandb.finish()
-        env.close()
-        print('TRAINING COMPLETE')
-
     else:
+        # Load the trained model
+        ppo_net = PPONet(embed_dim=EMBEDDED_DIM).to(device)
+        ppo_net.load_state_dict(torch.load(args.model_path))
+        ppo_net.eval()
 
-        def select_actions(state, uav_numebr):
-            uav_info, connected_gu_positions = np.split(state, [uav_numebr * 2], axis=0)
-            uav_info = uav_info.reshape(uav_numebr, 4)
-            uav_info = torch.from_numpy(uav_info).float().to(device)
-            connected_gu_positions = torch.from_numpy(connected_gu_positions).float().to(device)
-            action = []
-            with torch.no_grad():
-                tokens = transformer_policy(connected_gu_positions.unsqueeze(0), uav_info.unsqueeze(0)).squeeze(0)
-            for i in range(uav_numebr):
-                with torch.no_grad():
-                    # return action according to MLP [vx, vy]
-                    output = mlp_policy(tokens[i])
-                    output = output.cpu().numpy().reshape(2)
-                    output = output * args.max_speed_uav
-                    action.append(output)
-            return action
+        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='rgb_array')
+        env.reset(args.seed)
 
-    # For visible check
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='human')
-
-        # ACTOR POLICY NET policy
-        transformer_policy = TransformerEncoderDecoder(embed_dim=EMBEDDED_DIM).to(device)
-        mlp_policy = MLPPolicyNet(token_dim=EMBEDDED_DIM).to(device)
-
-        PATH_TRANSFORMER = './neural_network/bestTransformer.pth'
-        transformer_policy.load_state_dict(torch.load(PATH_TRANSFORMER))
-        PATH_MLP_POLICY = './neural_network/bestMLP.pth'
-        mlp_policy.load_state_dict(torch.load(PATH_MLP_POLICY))
-
-        options = ({
-            "uav": 3,
-            "gu": 120,
-            "clustered": 1,  # 0 for uniform, 1 for clustered
-            "clusters_number": 3,
-            "variance": 100000
-        })
-
-        time = int(time.perf_counter())
-        print("Time: ", time)
-        np.random.seed(time)
-        state, info = env.reset(seed=time, options=options)
-        steps = 1
-        uav_number = options["uav"]
-        while True:
-            actions = select_actions(state, uav_number)
-            next_state, reward, terminated, truncated, info = env.step(actions)
-
-            if steps == 300:
-                truncated = True
-            done = truncated or info['Collision']
-
-            # if steps % 70 == 0 and steps != 0:
-            #     state = env.reset_gu(options=options)
-
-            state = next_state
-            steps += 1
-
-            if done:
-                last_RCR = float(info['RCR'])
-                break
-
-        env.close()
-        print("Last RCR: ", last_RCR)
-
-    """
-
-        # for numerical test
-        env = gym.make('gym_cruising:Cruising-v0', render_mode='rgb_array', track_id=2)
-
-        # ACTOR POLICY NET policy
-        transformer_policy = TransformerEncoderDecoder(embed_dim=EMBEDDED_DIM).to(device)
-        mlp_policy = MLPPolicyNet(token_dim=EMBEDDED_DIM).to(device)
-
-        PATH_TRANSFORMER = './neural_network/last1Transformer.pth'
-        transformer_policy.load_state_dict(torch.load(PATH_TRANSFORMER))
-        PATH_MLP_POLICY = './neural_network/last1MLP.pth'
-        mlp_policy.load_state_dict(torch.load(PATH_MLP_POLICY))
-
-        options = ({
-            "uav": 3,
-            "gu": 120,
-            "clustered": 1,
-            "clusters_number": 3,
-            "variance": 100000
-        })
-
-        seeds = [5522, 6004, 9648, 8707, 5930, 7411, 8761, 6748, 283, 4880, 7541, 2423, 9652, 4469, 3508, 8969, 8222, 6413,
-                3133, 273, 1431, 9688, 6940, 9998, 7097, 1130, 7583, 4018, 116, 1626, 9579, 2641, 8602, 3335, 7980, 3434,
-                1553, 4961, 2024, 2834, 6610, 979, 9405, 4866, 7437, 3827, 3735, 2038, 1360, 5202, 4870, 1945, 382, 7101,
-                2402, 7235, 8967, 2315, 5955, 4300, 1775, 8136, 1050, 6385, 1068, 5451, 9772, 2331, 6174, 4393, 4873, 7296,
-                1780, 5299, 4919, 625, 87, 2240, 2815, 5020, 43, 211, 17, 1243, 97, 23, 57, 1111, 2013, 571, 1729,
-                333, 907, 1025, 621162, 513527, 268574, 233097, 342217, 310673]
-        tot_rewards = []
-        collisions = 0
-        for j, seed in enumerate(seeds):
-            print("Test ", str(j))
-            np.random.seed(seed)
-            state, info = env.reset(seed=seed, options=options)
-            steps = 1
-            uav_number = options["uav"]
-            while True:
-                actions = select_actions(state, uav_number)
-                next_state, reward, terminated, truncated, info = env.step(actions)
-
-                if steps == 300:
-                    truncated = True
-                done = truncated or info['Collision']
-
-                state = next_state
-                steps += 1
-
-                if done:
-                    tot_rewards.append(float(info['RCR']))
-                    if info['Collision']:
-                        collisions += 1
-                    break
-
-            env.close()
-
-        print("Mean reward: ", sum(tot_rewards) / len(tot_rewards))
-        print("Collisioni: ", collisions)
-
-    ### CONSENTENDO USCITA DA AMBIENTE, reti BEST ###
-
-    # 4 uniform 120 -> Mean reward:  0.11620978971348572, 85 collisione
-    # 4 clustered 120 4 -> Mean reward:  0.5202186639820837 100000,  32 collisioni
-
-    # 3 uniform 120 -> Mean reward:  0.8277718007374375, 1 collisione
-    # 3 uniform 240 -> Mean reward:  0.8252742658334771, 1 collisione
-    # 3 uniform 120 -> Mean reward:  0.8122288563359238 speed GU 27.7 m/s, collisioni:  2
-
-    # 3 clustered 120 3 -> Mean reward:  0.7008802710879044 100000, 5 collisioni
-    # 3 clustered 240 3 -> Mean reward:  0.6814977518089524 100000, 6 collisioni
-    # 3 clustered 120 3 -> Mean reward:  0.689776540005067  100000 speed GU 27.7 m/s, 9 collisioni
-
-    # 3 clustered 120 6 -> Mean reward:  0.7395896839831192 100000, 4 collisioni
-
-    # 2 uniform 120 -> Mean reward:  0.5633710783311148, Collisioni:  0
-    # 2 uniform 100 -> Mean reward:  0.5766865700476401, Collisioni:  0
-    # 2 clustered 100 2 -> Mean reward:  0.601128310266376 100000, Collisioni: 2
-    # 2 clustered 120 2 -> Mean reward:  0.5859859126286509 100000, Collisioni:  3
-    # 2 clustered 120 4 -> Mean reward:  0.6558568341938088 100000, Collisioni:  1
-    # 2 clustered 100 4 -> Mean reward:  0.6612490702720975 100000, Collisioni:  0
-
-    """
+        # Test the trained model
+        #test(agent, test_envs, tasks, global_step, True, True)

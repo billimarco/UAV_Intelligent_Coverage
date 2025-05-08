@@ -27,6 +27,8 @@ def parse_args():
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=1.0e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
+    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="if toggled, the learning rate will be annealed")
     parser.add_argument("--seed", type=int, default=9,
                         help="seed of the experiment")
     parser.add_argument("--total-timesteps", type=int, default=99,
@@ -44,25 +46,7 @@ def parse_args():
     parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the training will be performed")
     
-    '''
-    # Agent specific arguments
-    parser.add_argument("--network-type", type=str, default="cnn", nargs="?", const="cnn",
-                        help="the network architecture")
-    parser.add_argument("--ac-mlp", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="if toggled, actor and critic are mlp otherwise linear")
-    parser.add_argument("--pretrained-adapt", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="if toggled, you pass 224x224 images to network")
-    parser.add_argument("--forward-type", type=str, default="single_frame", nargs="?", const="single_frame",
-                        help="how input frames are passed to the network")#single_frame, multi_frame_patch_concat, conv_adapter
-    parser.add_argument("--use-lora", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="if toggled, you use LoRA in pretrained nets")
     
-     # LoRA specific arguments
-    parser.add_argument("--lora-rank", type=int, default=16,
-                        help="the rank variable of LoRA")
-    parser.add_argument("--lora-alpha", type=int, default=16,
-                        help="the alpha variable of LoRA")
-    '''
     parser.add_argument("--alg", type=str, default="PPO", nargs="?", const="PPO",
                         help="Algorithm to use: PPO, TD3")
     
@@ -161,8 +145,7 @@ def parse_args():
                         help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5,
                         help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=None,
-                        help="the target KL divergence threshold")
+    
 
     args = parser.parse_args()
     args.batch_size = int(args.num_envs * args.num_steps)
