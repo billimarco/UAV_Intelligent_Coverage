@@ -56,7 +56,7 @@ def compute_gae(rewards, values, dones):
 
     for t in reversed(range(num_steps)):
         next_values = values_ext[:, t + 1, 0]  # Riduci la dimensione dell'ultimo asse
-        not_done = 1.0 - dones[:, t, 0].float()  # Il flag di fine episodio per tutti gli UAV
+        not_done = (1.0 - dones[:, t, 0].float()).unsqueeze(-1).expand(-1, max_uav) # Il flag di fine episodio per tutti gli UAV
         # Broadcasting per fare in modo che next_values e values abbiano la stessa forma di rewards
         next_values = next_values.unsqueeze(-1).expand(-1, max_uav)  # Ora next_values ha forma (num_envs, max_uav)
         values_current = values[:, t, 0].unsqueeze(-1).expand(-1, max_uav)  # Ora values ha forma (num_envs, max_uav)
@@ -68,7 +68,7 @@ def compute_gae(rewards, values, dones):
         advantages[:, t, :] = gae
 
     # I ritorni sono la somma delle advantages e dei valori
-    returns = advantages + values[:, :, 0].unsqueeze(-1).expand(-1, max_uav)  # Broadcasting per adattarsi a (num_envs, num_steps, max_uav)
+    returns = advantages + values[:, :, 0].unsqueeze(-1).expand(-1, -1, max_uav)  # Broadcasting per adattarsi a (num_envs, num_steps, max_uav)
 
     return advantages, returns
 
@@ -102,6 +102,15 @@ def add_padding(actions, reward, logprobs, values):
 
     return actions, reward, logprobs, values
 
+def add_padding_state_uav(state, uav_number):
+    # Padding per lo stato (in NumPy)
+    padding = np.array([[0., 0.]])
+    # Applica padding allo stato (UAV*2 → max_UAV*2)
+    for i in range(uav_number*2, args.max_uav_number * 2):
+        state = np.insert(state, i, padding, axis=0)
+            
+    return state
+
 def process_state_batch(state_batch):
     """
     Estrae le info UAV e GU da un batch di stati e produce anche le maschere booleane.
@@ -117,15 +126,8 @@ def process_state_batch(state_batch):
     gu_pos_list = []
     uav_masks = []
     gu_masks = []
-    
-    # Padding per lo stato (in NumPy)
-    padding = np.array([[0., 0.]])
 
     for array in state_batch:
-        # Applica padding allo stato (UAV*2 → max_UAV*2)
-        for i in range(args.uav_number * 2, args.max_uav_number * 2):
-            array = np.insert(array, i, padding, axis=0)
-            
         uav_info, gu_positions = np.split(array, [args.max_uav_number * 2], axis=0)
 
         # UAV info: reshape e conversione
@@ -222,38 +224,46 @@ def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0,
 
     for ep in range(num_episodes):
         options = get_set_up()
-        state, _ = env.reset(seed=int(time.perf_counter()), options=options)
+        np.random.seed(ep)
+        state, info = env.reset(seed=ep, options=options)
         done = False
-        episode_reward = 0
-        last_rcr = 0
+        steps = 1
+        sum_episode_reward = 0
+        sum_last_rcr = 0
 
         while not done:
-            # Estrazione e preprocessing dello stato
-            uav_info, connected_gu_positions = np.split(state, [options['uav'] * 2], axis=0)
-            uav_info = uav_info.reshape(options['uav'], 4)
-
-            uav_info_tensor = torch.tensor(uav_info, dtype=torch.float32).unsqueeze(0).to(device)
-            gu_pos_tensor = torch.tensor(connected_gu_positions, dtype=torch.float32).unsqueeze(0).to(device)
-
+            state = add_padding_state_uav(state, options["uav"])
+            uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
+            
             # Inference
             with torch.no_grad():
-                actions, _, _, _ = agent(gu_pos_tensor, uav_info_tensor)
+                actions, _, _, _ = agent(
+                    uav_info,                  # shape: (1, UAV, 4)    
+                    connected_gu_positions,    # shape: (1, GU, 2)
+                    uav_mask,                  # shape: (1, UAV)
+                    gu_mask                    # shape: (1, GU)
+                )
 
-            actions = actions.squeeze(0).cpu().numpy()
-            scaled_actions = actions * args.max_speed_uav
-
+            # Rimuovi batch dim
+            actions = actions.squeeze(0)     # shape: (UAV, 2)
+            # Applica max speed scaling
+            scaled_actions = actions * args.max_speed_uav   # (UAV, 2)
+            real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
             # Passaggio ambiente
-            state, reward, terminated, truncated, info = env.step(scaled_actions)
+            next_state, reward, terminated, truncated, info = env.step(real_actions.cpu().numpy())
+            if steps == 300:
+                truncated = True
             done = terminated or truncated
-            episode_reward += np.mean(reward)
+            sum_episode_reward += sum(reward)
+            state = next_state
             if done:
-                last_rcr += float(info['RCR'])
+                sum_last_rcr += float(info['RCR'])
                 break
         
         # Aggiungi l'RCR medio per l'episodio
-        rcr_values.append(last_rcr / (1 if done else 0))  # Media di RCR per episodio
-        total_rewards.append(episode_reward)
-        print(f"Episode {ep + 1}: reward = {episode_reward:.2f}, RCR = {last_rcr:.2f}")
+        rcr_values.append(sum_last_rcr / (1 if done else 0))  # Media di RCR per episodio
+        total_rewards.append(sum_episode_reward)
+        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, reward = {sum_episode_reward:.2f}, RCR = {sum_last_rcr:.2f}")
 
     # Statistiche
     mean_reward = np.mean(total_rewards)
@@ -347,6 +357,7 @@ if __name__ == "__main__":
         start_time = time.time()
         
         for update in range(0, args.updates_per_env):
+            print(f"Update {update + 1}/{args.updates_per_env}")
 
             if update % 20 == 0 and update % args.updates_per_env != 0:
                 print("\n<------------------------->")
@@ -376,6 +387,8 @@ if __name__ == "__main__":
                 state, info = env.reset(seed=int(time.perf_counter()), options=options)
                 for step in range(args.num_steps):
                     global_step += 1
+                    
+                    state = add_padding_state_uav(state, options["uav"])
 
                     uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
                     
@@ -415,8 +428,7 @@ if __name__ == "__main__":
                     values_tensor[i, step, :] = values
 
                     state = next_state
-            
-            #TODO Con critic centralizzato bisogna calcolare gli advantages e i returns per ogni UAV        
+                    
             # Calcolare gli advantages e i returns usando GAE
             advantages_tensor, returns_tensor = compute_gae(
                 rewards=rewards_tensor,
@@ -431,8 +443,8 @@ if __name__ == "__main__":
             flat_actions = actions_tensor.reshape(args.batch_size, args.max_uav_number, 2)
             flat_log_probs = log_probs_tensor.reshape(args.batch_size, args.max_uav_number)
             flat_rewards = rewards_tensor.reshape(args.batch_size, args.max_uav_number)
-            flat_dones = dones_tensor.reshape(args.batch_size, args.max_uav_number)
-            flat_values = values_tensor.reshape(args.batch_size, args.max_uav_number)
+            flat_dones = dones_tensor.reshape(args.batch_size, 1)
+            flat_values = values_tensor.reshape(args.batch_size, 1)
             flat_advantages = advantages_tensor.reshape(args.batch_size, args.max_uav_number)
             flat_returns = returns_tensor.reshape(args.batch_size, args.max_uav_number)
 
@@ -444,21 +456,22 @@ if __name__ == "__main__":
                     end = start + args.minibatch_size
                     mb_inds = b_inds[start:end]
 
-                    mb_states = [states_list[i] for i in mb_inds.tolist()]     # [MB, ...]
-                    mb_actions = flat_actions[mb_inds]                    # [MB, UAV, 2]
-                    mb_logprobs = flat_log_probs[mb_inds]                 # [MB, UAV]
-                    mb_rewards = flat_rewards[mb_inds]                    # [MB, UAV]
-                    mb_dones = flat_dones[mb_inds].unsqueeze(-1)          # [MB, 1]
-                    mb_values = flat_values[mb_inds]                      # [MB, UAV]
-                    mb_advantages = flat_advantages[mb_inds]              # [MB, UAV]
-                    mb_returns = flat_returns[mb_inds]                    # [MB, UAV]
+                    mb_states = [states_list[i] for i in mb_inds.tolist()]              # [MB, ...]
+                    mb_actions = flat_actions[mb_inds]                                  # [MB, UAV, 2]
+                    mb_logprobs = flat_log_probs[mb_inds]                               # [MB, UAV]
+                    mb_rewards = flat_rewards[mb_inds]                                  # [MB, UAV]
+                    mb_dones = flat_dones[mb_inds].expand(-1, args.max_uav_number)      # [MB, 1*UAV]
+                    mb_values = flat_values[mb_inds].expand(-1, args.max_uav_number)    # [MB, 1*UAV]
+                    mb_advantages = flat_advantages[mb_inds]                            # [MB, UAV]
+                    mb_returns = flat_returns[mb_inds]                                  # [MB, UAV]
 
                     # Estrai info di stato UAV/GU
-                    mb_state_uav, mb_state_connected_gu = process_state_batch(mb_states)
+                    mb_state_uav, mb_state_connected_gu, mb_uav_mask, mb_gu_mask = process_state_batch(mb_states)
 
                     # Forward della rete
-                    mb_state_tokens = ppo_net.backbone_forward(mb_state_connected_gu, mb_state_uav)
+                    mb_state_tokens = ppo_net.backbone_forward(mb_state_uav, mb_state_connected_gu, mb_uav_mask, mb_gu_mask)
                     
+                    '''
                     # Valore utilizzato per il padding (assumendo che sia 100.0 per mb_actions)
                     padding_logprob = -1e8
 
@@ -466,18 +479,23 @@ if __name__ == "__main__":
                     mb_index_mask = (mb_logprobs != padding_logprob)  # La maschera è True per i droni reali
 
                     mb_masked_size = len(mb_index_mask)
-
+                    '''
                     # slice i-th UAV's tokens [masked_batch_size, 1, EMBEDDED_DIM]
-                    mb_masked_state_tokens = mb_state_tokens[mb_index_mask]
-                    mb_logprobs_masked = mb_logprobs[mb_index_mask]          # Maschera su logprobs
-                    mb_rewards_masked = mb_rewards[mb_index_mask]            # Maschera su rewards
-                    mb_dones_masked = mb_dones[mb_index_mask]                # Maschera su dones
-                    mb_values_masked = mb_values[mb_index_mask]              # Maschera su values
-                    mb_advantages_masked = mb_advantages[mb_index_mask]      # Maschera su advantages
-                    mb_returns_masked = mb_returns[mb_index_mask]            # Maschera su returns
-                
-                    _, newlogprob, entropy, newvalue = ppo_net.get_action_and_value(mb_masked_state_tokens)
-                    logratio = newlogprob - mb_logprobs_masked
+                    mb_masked_state_tokens = mb_state_tokens[mb_uav_mask]
+                    mb_logprobs_masked = mb_logprobs[mb_uav_mask]          # Maschera su logprobs
+                    mb_rewards_masked = mb_rewards[mb_uav_mask]            # Maschera su rewards
+                    mb_dones_masked = mb_dones[mb_uav_mask]                # Maschera su dones
+                    mb_values_masked = mb_values[mb_uav_mask]              # Maschera su values
+                    mb_advantages_masked = mb_advantages[mb_uav_mask]      # Maschera su advantages
+                    mb_returns_masked = mb_returns[mb_uav_mask]            # Maschera su returns
+
+                    _, newlogprob, entropy, newvalue = ppo_net.get_action_and_value(mb_state_tokens, mb_uav_mask)
+                    #TODO: mascherare newlogprob e newvalue, entropy
+                    mb_newlogprob_masked = newlogprob[mb_uav_mask]  # Maschera su logprobs
+                    mb_newvalues_masked = newvalue.unsqueeze(-1).expand(-1, args.max_uav_number)[mb_uav_mask]      # Maschera su values
+                    mb_entropy_masked = entropy[mb_uav_mask]      # Maschera su entropy
+                    
+                    logratio = mb_newlogprob_masked - mb_logprobs_masked
                     ratio = logratio.exp()
 
                     with torch.no_grad():
@@ -492,11 +510,10 @@ if __name__ == "__main__":
                     pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                     # Value loss
-                    newvalue = newvalue.view(-1)
                     if args.clip_vloss:
-                        v_loss_unclipped = (newvalue - mb_returns_masked) ** 2
+                        v_loss_unclipped = (mb_newvalues_masked - mb_returns_masked) ** 2
                         v_clipped = mb_values_masked + torch.clamp(
-                            newvalue - mb_values_masked,
+                            mb_newvalues_masked - mb_values_masked,
                             -args.clip_coef,
                             args.clip_coef,
                         )
@@ -504,9 +521,9 @@ if __name__ == "__main__":
                         v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
                         v_loss = 0.5 * v_loss_max.mean()
                     else:
-                        v_loss = 0.5 * ((newvalue - mb_returns_masked) ** 2).mean()
+                        v_loss = 0.5 * ((mb_newvalues_masked - mb_returns_masked) ** 2).mean()
 
-                    entropy_loss = entropy.mean()
+                    entropy_loss = mb_entropy_masked.mean()
                     total_loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
 
                     optimizer.zero_grad()
@@ -514,12 +531,10 @@ if __name__ == "__main__":
                     nn.utils.clip_grad_norm_(ppo_net.parameters(), args.max_grad_norm)
                     optimizer.step()
 
-            # Valore utilizzato per il padding (assumendo che sia 100.0 per mb_actions)
-            padding_logprob = -1e8
-            # Crea una maschera booleana che indica i droni reali (True per UAV reali, False per UAV fittizi)
-            b_index_mask = (flat_log_probs != padding_logprob)  # La maschera è True per i droni reali
+            # Estrai info di stato UAV/GU
+            _ , _ , b_uav_mask, _ = process_state_batch(states_list)
             # Log training metrics
-            y_pred, y_true = flat_values[b_index_mask].cpu().numpy(), flat_returns[b_index_mask].cpu().numpy()
+            y_pred, y_true = flat_values.expand(-1, args.max_uav_number)[b_uav_mask].cpu().numpy(), flat_returns[b_uav_mask].cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
             
