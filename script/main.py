@@ -23,7 +23,7 @@ from gym_cruising.neural_network.deep_Q_net import DeepQNet, DoubleDeepQNet
 from gym_cruising.neural_network.transformer_encoder_decoder import TransformerEncoderDecoder
 import gym_cruising.utils.runtime_utils as utils
 
-TRAIN = False
+TRAIN = True
 BATCH_SIZE = 256  # is the number of transitions random sampled from the replay buffer
 BETA = 0.005  # is the update rate of the target network
 GAMMA = 0.99  # Discount Factor

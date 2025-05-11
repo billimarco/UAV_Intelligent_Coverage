@@ -401,7 +401,7 @@ class CruiseUAV(Cruise):
     def convert_point(self, point: Point) -> Tuple[int, int]:
         pygame_x = (round(point.x_coordinate * self.resolution)
                     + self.x_offset)
-        pygame_y = (self.window_size
+        pygame_y = (self.window_height
                     - round(point.y_coordinate * self.resolution)
                     + self.y_offset)
         return pygame_x, pygame_y
@@ -410,7 +410,7 @@ class CruiseUAV(Cruise):
         shiftX = 15
         shiftY = 15
         pygame_x = (round(point.x_coordinate * self.resolution) - shiftX + self.x_offset)
-        pygame_y = (self.window_size - round(point.y_coordinate * self.resolution) - shiftY + self.y_offset)
+        pygame_y = (self.window_height - round(point.y_coordinate * self.resolution) - shiftY + self.y_offset)
         return pygame_x, pygame_y
 
     def create_info(self, terminated) -> dict:

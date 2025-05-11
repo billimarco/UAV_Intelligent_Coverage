@@ -171,7 +171,7 @@ def process_state_batch(state_batch):
 def get_uniform_options():
     return ({
         "uav": args.uav_number,
-        "gu": args.starting_gu_number,
+        "gu": args.starting_gu_number*args.uav_number,
         "clustered": False,
         "clusters_number": 0,
         "variance": 0
@@ -180,18 +180,11 @@ def get_uniform_options():
 def get_clustered_options():
     variance = random.randint(args.clusters_variance_min, args.clusters_variance_max)
 
-    if args.uav_number == 1:
-        clusters_number = random.randint(args.clusters_number, args.clusters_number+1)
-    elif args.uav_number == 2:
-        clusters_number = random.randint(args.clusters_number*2, args.clusters_number*2+2)
-    else:
-        clusters_number = random.randint(args.clusters_number*3, args.clusters_number*3+3)
-
     return ({
         "uav": args.uav_number,
-        "gu": args.starting_gu_number,
+        "gu": args.starting_gu_number*args.uav_number,
         "clustered": True,
-        "clusters_number": clusters_number,
+        "clusters_number": args.clusters_number*args.uav_number,
         "variance": variance
     })
 
@@ -203,18 +196,11 @@ def get_set_up():
         args.uav_number += 1
 
     sample = random.random()
-    if sample > 0.3:
+    if sample > 0.5:
         options = get_clustered_options()
     else:
         options = get_uniform_options()
 
-    options = {
-        "uav": args.uav_number,
-        "gu": args.starting_gu_number,
-        "clustered": False,
-        "clusters_number": 0,
-        "variance": 0
-    }
     return options
 
 def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0, args=None):
@@ -223,7 +209,13 @@ def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0,
     rcr_values = []
 
     for ep in range(num_episodes):
-        options = get_set_up()
+        options = {
+            "uav": 3,
+            "gu": 120,
+            "clustered": False,
+            "clusters_number": 0,
+            "variance": 0
+        }
         np.random.seed(ep)
         state, info = env.reset(seed=ep, options=options)
         done = False
@@ -251,7 +243,7 @@ def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0,
             real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
             # Passaggio ambiente
             next_state, reward, terminated, truncated, info = env.step(real_actions.cpu().numpy())
-            if steps == 300:
+            if steps == 384:
                 truncated = True
             done = terminated or truncated
             sum_episode_reward += sum(reward)
@@ -263,7 +255,7 @@ def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0,
         # Aggiungi l'RCR medio per l'episodio
         rcr_values.append(sum_last_rcr / (1 if done else 0))  # Media di RCR per episodio
         total_rewards.append(sum_episode_reward)
-        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, reward = {sum_episode_reward:.2f}, RCR = {sum_last_rcr:.2f}")
+        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, clusters = {options['clusters_number']}, reward = {sum_episode_reward:.2f}, RCR = {sum_last_rcr:.2f}")
 
     # Statistiche
     mean_reward = np.mean(total_rewards)
@@ -435,7 +427,7 @@ if __name__ == "__main__":
                 values=values_tensor,
                 dones=dones_tensor
             )
-
+            
             
             # Supponiamo che le variabili siano già definite con shape (num_envs, num_steps, ...)
 
@@ -495,6 +487,7 @@ if __name__ == "__main__":
                     mb_newvalues_masked = newvalue.unsqueeze(-1).expand(-1, args.max_uav_number)[mb_uav_mask]      # Maschera su values
                     mb_entropy_masked = entropy[mb_uav_mask]      # Maschera su entropy
                     
+                    
                     logratio = mb_newlogprob_masked - mb_logprobs_masked
                     ratio = logratio.exp()
 
@@ -503,6 +496,10 @@ if __name__ == "__main__":
                         approx_kl = ((ratio - 1) - logratio).mean()
                         clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
+                    # Normalizza le advantages
+                    if args.norm_adv:
+                        mb_advantages_masked = (mb_advantages_masked - mb_advantages_masked.mean()) / (mb_advantages_masked.std() + 1e-8)
+                        mb_returns_masked = (mb_returns_masked - mb_returns_masked.mean()) / (mb_returns_masked.std() + 1e-8)
 
                     # Policy loss
                     pg_loss1 = -mb_advantages_masked * ratio
@@ -534,7 +531,9 @@ if __name__ == "__main__":
             # Estrai info di stato UAV/GU
             _ , _ , b_uav_mask, _ = process_state_batch(states_list)
             # Log training metrics
-            y_pred, y_true = flat_values.expand(-1, args.max_uav_number)[b_uav_mask].cpu().numpy(), flat_returns[b_uav_mask].cpu().numpy()
+            y_pred = flat_values.expand(-1, args.max_uav_number)[b_uav_mask].cpu().numpy()
+            flat_returns_masked = flat_returns[b_uav_mask].cpu().numpy()
+            y_true = (flat_returns_masked - flat_returns_masked.mean()) / (flat_returns_masked.std() + 1e-8) #flat_returns[b_uav_mask].cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
             
@@ -551,16 +550,146 @@ if __name__ == "__main__":
             }, step=global_step)
 
         test(agent=ppo_net, env=env, num_episodes=12, device=device, global_step=global_step, args=args)
-        
-        
-    else:
+        # Ottieni il percorso assoluto della root del progetto, basato su questo file
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        # Path al file dei pesi
+        model_path = os.path.join(project_root, "neural_network", "PPO.pth")
+        torch.save(ppo_net.state_dict(), model_path)
+    
+    if args.visualize:
+        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='human')
         # Load the trained model
         ppo_net = PPONet(embed_dim=EMBEDDED_DIM).to(device)
-        ppo_net.load_state_dict(torch.load(args.model_path))
-        ppo_net.eval()
+        # Ottieni il percorso assoluto della root del progetto, basato su questo file
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        # Path al file dei pesi
+        model_path = os.path.join(project_root, "neural_network", "PPO.pth")
+        ppo_net.load_state_dict(torch.load(model_path))
+        
+        options = ({
+            "uav": 3,
+            "gu": 120,
+            "clustered": 1,  # 0 for uniform, 1 for clustered
+            "clusters_number": 3,
+            "variance": 100000
+        })
+        
+        time = int(time.perf_counter())
+        print("Time: ", time)
+        np.random.seed(time)
+        state, info = env.reset(seed=time, options=options)
+        steps = 1
 
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='rgb_array')
-        env.reset(args.seed)
+        while True:
+            state = add_padding_state_uav(state, options["uav"])
+            uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
+            
+            # Inference
+            with torch.no_grad():
+                actions, _, _, _ = ppo_net(
+                    uav_info,                  # shape: (1, UAV, 4)    
+                    connected_gu_positions,    # shape: (1, GU, 2)
+                    uav_mask,                  # shape: (1, UAV)
+                    gu_mask                    # shape: (1, GU)
+                )
+
+            # Rimuovi batch dim
+            actions = actions.squeeze(0)     # shape: (UAV, 2)
+            # Applica max speed scaling
+            scaled_actions = actions * args.max_speed_uav   # (UAV, 2)
+            real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
+            # Passaggio ambiente
+            next_state, reward, terminated, truncated, info = env.step(real_actions.cpu().numpy())
+
+            if steps == 300:
+                truncated = True
+            done = truncated or info['Collision']
+
+            # if steps % 70 == 0 and steps != 0:
+            #     state = env.reset_gu(options=options)
+
+            state = next_state
+            steps += 1
+
+            if done:
+                last_RCR = float(info['RCR'])
+                break
+
+        env.close()
+        print("Last RCR: ", last_RCR)
+    
+    if args.numerical_test:
+        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='human')
+        # Load the trained model
+        ppo_net = PPONet(embed_dim=EMBEDDED_DIM).to(device)
+        # Ottieni il percorso assoluto della root del progetto, basato su questo file
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        # Path al file dei pesi
+        model_path = os.path.join(project_root, "neural_network", "PPO.pth")
+        ppo_net.load_state_dict(torch.load(model_path))
+        
+        options = ({
+            "uav": 3,
+            "gu": 120,
+            "clustered": 1,  # 0 for uniform, 1 for clustered
+            "clusters_number": 3,
+            "variance": 100000
+        })
+        seeds = [5522, 6004, 9648, 8707, 5930, 7411, 8761, 6748, 283, 4880, 7541, 2423, 9652, 4469, 3508, 8969, 8222, 6413,
+                3133, 273, 1431, 9688, 6940, 9998, 7097, 1130, 7583, 4018, 116, 1626, 9579, 2641, 8602, 3335, 7980, 3434,
+                1553, 4961, 2024, 2834, 6610, 979, 9405, 4866, 7437, 3827, 3735, 2038, 1360, 5202, 4870, 1945, 382, 7101,
+                2402, 7235, 8967, 2315, 5955, 4300, 1775, 8136, 1050, 6385, 1068, 5451, 9772, 2331, 6174, 4393, 4873, 7296,
+                1780, 5299, 4919, 625, 87, 2240, 2815, 5020, 43, 211, 17, 1243, 97, 23, 57, 1111, 2013, 571, 1729,
+                333, 907, 1025, 621162, 513527, 268574, 233097, 342217, 310673]
+        
+        tot_rewards = []
+        collisions = 0
+        for j, seed in enumerate(seeds):
+            print("Test ", str(j))
+            np.random.seed(seed)
+            state, info = env.reset(seed=seed, options=options)
+            steps = 1
+            while True:
+                state = add_padding_state_uav(state, options["uav"])
+                uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
+                
+                # Inference
+                with torch.no_grad():
+                    actions, _, _, _ = ppo_net(
+                        uav_info,                  # shape: (1, UAV, 4)    
+                        connected_gu_positions,    # shape: (1, GU, 2)
+                        uav_mask,                  # shape: (1, UAV)
+                        gu_mask                    # shape: (1, GU)
+                    )
+
+                # Rimuovi batch dim
+                actions = actions.squeeze(0)     # shape: (UAV, 2)
+                # Applica max speed scaling
+                scaled_actions = actions * args.max_speed_uav   # (UAV, 2)
+                real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
+                # Passaggio ambiente
+                next_state, reward, terminated, truncated, info = env.step(real_actions.cpu().numpy())
+
+                if steps == 300:
+                    truncated = True
+                done = truncated or info['Collision']
+
+                # if steps % 70 == 0 and steps != 0:
+                #     state = env.reset_gu(options=options)
+
+                state = next_state
+                steps += 1
+                if done:
+                    tot_rewards.append(float(info['RCR']))
+                    if info['Collision']:
+                        collisions += 1
+                    break
+                
+            env.close()
+            
+        print("Mean reward: ", sum(tot_rewards) / len(tot_rewards))
+        print("Collisioni: ", collisions)
+        
 
         # Test the trained model
         #test(agent, test_envs, tasks, global_step, True, True)

@@ -25,7 +25,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default="ppo_vanilla",
                         help="the name of this experiment")
-    parser.add_argument("--learning-rate", type=float, default=1.0e-4,
+    parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the learning rate will be annealed")
@@ -43,12 +43,16 @@ def parse_args():
                         help="the wandb's project name")
     parser.add_argument("--wandb-entity", type=str, default="marcolbilli-universit-di-firenze",
                         help="the entity (team) of wandb's project")
-    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-                        help="if toggled, the training will be performed")
     
     
     parser.add_argument("--alg", type=str, default="PPO", nargs="?", const="PPO",
                         help="Algorithm to use: PPO, TD3")
+    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="if toggled, the training will be performed")
+    parser.add_argument("--visualize", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+                        help="visualize an enviroment using trained model")
+    parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="numerical test using trained model")
     
     # Environment specific arguments
     parser.add_argument("--max-uav-number", type=int, default=3,
@@ -63,7 +67,7 @@ def parse_args():
                         help="the height size of the PyGame window")
     parser.add_argument("--spawn-offset" , type=int, default=15,
                         help="the spawn offset of the environment")
-    parser.add_argument("--resolution", type=float, default=0.1667,
+    parser.add_argument("--resolution", type=float, default=0.25,
                     help="environment resolution in pixels per meter (used to convert window size and spawn offset to real-world dimensions)") # 0.1667, 0.25, 0.3333, 0.5
     parser.add_argument("--x-offset", type=float, default=0,
                         help="the x offset of the environment")
@@ -117,11 +121,11 @@ def parse_args():
                         help="the maximum variance of the clusters")
     
     # Algorithm specific arguments
-    parser.add_argument("--num-envs", type=int, default=32,
+    parser.add_argument("--num-envs", type=int, default=8,
                         help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128,
+    parser.add_argument("--num-steps", type=int, default=384,
                         help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--updates-per-env", type=int, default=500,
+    parser.add_argument("--updates-per-env", type=int, default=2,
                         help="the number of steps to run in each environment")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Use GAE for advantage computation")
@@ -129,9 +133,9 @@ def parse_args():
                         help="the discount factor gamma")
     parser.add_argument("--gae-lambda", type=float, default=0.95,
                         help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=32,
+    parser.add_argument("--num-minibatches", type=int, default=8,
                         help="the number of mini-batches") 
-    parser.add_argument("--update-epochs", type=int, default=4,
+    parser.add_argument("--update-epochs", type=int, default=1,
                         help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggles advantages normalization")

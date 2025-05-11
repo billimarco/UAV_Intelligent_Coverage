@@ -30,6 +30,7 @@ class ActorHead(nn.Module):
         # Applica la rete solo ai token validi
         x = F.relu(self.fl1(valid_tokens))
         x = F.relu(self.fl2(x))
+        
         mean_valid = self.fl3(x)
         std_valid = torch.exp(self.log_std).expand_as(mean_valid)
 
@@ -44,4 +45,26 @@ class ActorHead(nn.Module):
         # Ripristina le dimensioni originali
         mean = mean.view(B, U, 2)
         std = std.view(B, U, 2)
+        
         return mean, std
+        '''
+        B, U, D = token.shape
+
+        # Appiattisci le dimensioni batch e UAV
+        token_flat = token.view(B * U, D)
+        mask_flat = uav_mask.view(B * U)
+        
+        # Seleziona solo i token validi
+        valid_tokens = token_flat[mask_flat]
+
+        # Applica la rete solo ai token validi
+        x = F.relu(self.fl1(valid_tokens))
+        x = F.relu(self.fl2(x))
+        x = F.tanh(self.fl3(x))
+        
+        act = torch.zeros(B * U, 2, device=token.device)
+        act[mask_flat] = x
+        act = act.view(B, U, 2)
+        
+        return act
+        '''
