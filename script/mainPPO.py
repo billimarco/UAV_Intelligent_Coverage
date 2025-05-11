@@ -499,7 +499,6 @@ if __name__ == "__main__":
                     # Normalizza le advantages
                     if args.norm_adv:
                         mb_advantages_masked = (mb_advantages_masked - mb_advantages_masked.mean()) / (mb_advantages_masked.std() + 1e-8)
-                        mb_returns_masked = (mb_returns_masked - mb_returns_masked.mean()) / (mb_returns_masked.std() + 1e-8)
 
                     # Policy loss
                     pg_loss1 = -mb_advantages_masked * ratio
@@ -532,8 +531,7 @@ if __name__ == "__main__":
             _ , _ , b_uav_mask, _ = process_state_batch(states_list)
             # Log training metrics
             y_pred = flat_values.expand(-1, args.max_uav_number)[b_uav_mask].cpu().numpy()
-            flat_returns_masked = flat_returns[b_uav_mask].cpu().numpy()
-            y_true = (flat_returns_masked - flat_returns_masked.mean()) / (flat_returns_masked.std() + 1e-8) #flat_returns[b_uav_mask].cpu().numpy()
+            y_true = flat_returns[b_uav_mask].cpu().numpy()
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
             
