@@ -1,5 +1,5 @@
-from gym_cruising.enums.color import Color
-from gym_cruising.geometry.point import Point
+from gym_cruising_v2.enums.color import Color
+from gym_cruising_v2_v2.geometry.point import Point
 
 
 class GU:
@@ -14,15 +14,10 @@ class GU:
         self.covered = False
         self.channels_state = []
 
-    def getColor(self):
-        if self.covered:
-            return Color.GREEN.value
-        return Color.RED.value
-
     def getImage(self):
         if self.covered:
-            return './gym_cruising/images/green30.png'
-        return './gym_cruising/images/white30.png'
+            return './gym_cruising_v2_v2/images/green30.png'
+        return './gym_cruising_v2_v2/images/white30.png'
 
     def setCovered(self, covered: bool):
         self.covered = covered

@@ -5,7 +5,6 @@ import math
 from typing import Any
 
 import numpy as np
-from gym_cruising.enums.color import Color
 
 
 class Point:
@@ -13,10 +12,12 @@ class Point:
 
     x_coordinate: float
     y_coordinate: float
+    step_from_last_visit: int # Quanti step fa è stato visitato
 
     def __init__(self, x_coordinate: float, y_coordinate: float) -> None:
         self.x_coordinate = x_coordinate
         self.y_coordinate = y_coordinate
+        self.step_from_last_visit = 0
 
     def calculate_distance(self, other: Point) -> float:
         """ Calculate the Euclidean distance between two points. """

@@ -1,6 +1,4 @@
 import numpy as np
-
-from gym_cruising.geometry.point import Point
 import math
 
 class CommunicationChannel:
