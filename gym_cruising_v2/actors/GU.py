@@ -1,6 +1,4 @@
-from gym_cruising_v2.enums.color import Color
-from gym_cruising_v2_v2.geometry.point import Point
-
+from gym_cruising_v2.geometry.point import Point
 
 class GU:
     position: Point

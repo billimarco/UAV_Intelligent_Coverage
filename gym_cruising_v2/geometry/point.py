@@ -13,11 +13,13 @@ class Point:
     x_coordinate: float
     y_coordinate: float
     step_from_last_visit: int # Quanti step fa è stato visitato
+    unexplored_point_max_steps: int
 
-    def __init__(self, x_coordinate: float, y_coordinate: float) -> None:
+    def __init__(self, x_coordinate: float, y_coordinate: float, unexplored_point_max_steps: int) -> None:
         self.x_coordinate = x_coordinate
         self.y_coordinate = y_coordinate
         self.step_from_last_visit = 0
+        self.unexplored_point_max_steps = unexplored_point_max_steps
 
     def calculate_distance(self, other: Point) -> float:
         """ Calculate the Euclidean distance between two points. """
@@ -30,7 +32,13 @@ class Point:
         if self.y_coordinate <= area[1, 0] or self.y_coordinate >= area[1, 1]:
             return False
         return True
-
+    
+    def increment_step_from_last_visit(self):
+        if(self.step_from_last_visit < self.unexplored_point_max_steps):
+            self.step_from_last_visit += 1
+        
+    def reset_step_from_last_visit(self):
+        self.step_from_last_visit = 0
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, Point)

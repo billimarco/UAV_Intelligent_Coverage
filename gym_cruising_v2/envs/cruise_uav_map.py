@@ -5,6 +5,7 @@ import math
 
 import numpy as np
 import pygame
+from gymnasium import spaces
 from gymnasium.spaces import Box
 from pygame import Surface
 
@@ -12,6 +13,8 @@ from gym_cruising_v2.actors.GU import GU
 from gym_cruising_v2.actors.UAV import UAV
 from gym_cruising_v2.envs.cruise import Cruise
 from gym_cruising_v2.geometry.point import Point
+from gym_cruising_v2.geometry.pixel import Pixel
+from gym_cruising_v2.geometry.grid import Grid
 from gym_cruising_v2.utils.channels_utils import CommunicationChannel
 
 class CruiseUAVWithMap(Cruise):
@@ -27,7 +30,6 @@ class CruiseUAVWithMap(Cruise):
 
     gu_covered = 0
     last_RCR = None
-    reward_gamma = 0.7
 
     def __init__(self, args, render_mode=None) -> None:
         super().__init__(args, render_mode)
@@ -42,13 +44,19 @@ class CruiseUAVWithMap(Cruise):
         self.max_speed_uav = args.max_speed_uav # m/s - about 20 Km/h x 10 steps
         self.covered_threshold = args.covered_threshold # dB
         self.uav_altitude = args.uav_altitude # meters
+        self.reward_gamma = args.reward_gamma
         
+        self.unexplored_point_max_steps = args.unexplored_point_max_steps
+        self.grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset, args.unexplored_point_max_steps)
         self.communication_channel = CommunicationChannel(args)
         
 
         self.reset_observation_action_space()
 
+
+    # RESET ENVIROMENT
     def reset_observation_action_space(self):
+        '''
         spawn_area = self.np_random.choice(self.grid.spawn_area)
         (x_min, x_max), (y_min, y_max) = spawn_area
 
@@ -57,37 +65,132 @@ class CruiseUAVWithMap(Cruise):
         min_y = y_min - self.max_speed_uav
         max_y = y_max + self.max_speed_uav
         
-        low = np.array([min_x, min_y], dtype=np.float64)
-        high = np.array([max_x, max_y], dtype=np.float64)
-        
+        self.low = np.array([min_x, min_y], dtype=np.float64)
+        self.high = np.array([max_x, max_y], dtype=np.float64)
         obs_shape = ((self.uav_number * 2) + self.gu_covered, 2)
         self.low_observation = np.tile(low, (obs_shape[0], 1))
         self.high_observation = np.tile(high, (obs_shape[0], 1))
-        self.observation_space = Box(low=self.low_observation,
-                                     high=self.high_observation,
-                                     shape=((self.uav_number * 2) + self.gu_covered, 2),
-                                     dtype=np.float64)
+        '''
+        self.observation_space = self.observation_space = spaces.Dict({
+            "map_exploration_states": spaces.Box(low=0, high=+1, shape=(self.window_width, self.window_height), dtype=np.float32),
+            "uav_states": spaces.Box(low=-1, high=+1, shape=(self.uav_number * 2, 2), dtype=np.float64),
+            "covered_users_states": spaces.Box(low=-1, high=+1, shape=(self.gu_covered, 2), dtype=np.float64)
+        })
 
-        self.action_space = Box(low=(-1) * self.max_speed_uav,
-                                high=self.max_speed_uav,
-                                shape=(self.uav_number, 2),
-                                dtype=np.float64)
+        self.action_space = spaces.Dict({
+            "uav_moves": spaces.Box(
+                low=-1,
+                high=+1,
+                shape=(self.uav_number, 2),
+                dtype=np.float64
+            )
+        })
 
     def reset(self, seed=None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
         self.uav = []
         self.gu = []
         self.uav_number = options["uav"]
         self.starting_gu_number = options["gu"]
+        self.grid.reset()
         self.reset_observation_action_space()
-        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
+        #RAND
+        #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
         self.last_RCR = None
         np.random.seed(seed)
         return super().reset(seed=seed, options=options)
     
+    def reset_gu(self, options: Optional[dict] = None) -> np.ndarray:
+        self.gu = []
+        #RAND
+        #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
+        self.gu_covered = 0
+        self.last_RCR = None
+        if not options['clustered']:
+            self.init_gu()
+        else:
+            self.init_gu_clustered(options)
+        self.calculate_PathLoss_with_Markov_Chain()
+        self.calculate_SINR()
+        self.check_connection_and_coverage_UAV_GU()
+        return self.get_observation()
+    
+    
+    # INITIALIZE ENVIROMENT
+    def init_environment(self, options: Optional[dict] = None) -> None:
+        self.init_uav()
+        if not options["clustered"]:
+            self.init_gu()
+        else:
+            self.init_gu_clustered(options)
+        self.calculate_PathLoss_with_Markov_Chain()
+        self.calculate_SINR()
+        self.check_connection_and_coverage_UAV_GU()
+ 
+    def init_uav(self) -> None:
+        area = self.np_random.choice(self.grid.spawn_area)
+        # x_coordinate = self.np_random.uniform(area[0][0] + 800, area[0][1] - 800)
+        for i in range(self.uav_number):
+            while True:
+                x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
+                y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
+                position = self.grid.get_point(x_coordinate, y_coordinate)
+
+                # Primo UAV: non serve il check
+                if i == 0 or not self.check_if_are_too_close(i, position):
+                    self.uav.append(UAV(position))
+                    break
+
+    def init_gu(self) -> None:
+        area = self.np_random.choice(self.grid.spawn_area)
+        for _ in range(self.starting_gu_number):
+            x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
+            y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
+            position = self.grid.get_point(x_coordinate, y_coordinate)
+            gu = GU(position)
+            self.initialize_channel(gu)
+            self.gu.append(gu)
+
+    def init_gu_clustered(self, options: Optional[dict] = None) -> None:
+        area = self.np_random.choice(self.grid.spawn_area)
+        std_dev = np.sqrt(options['variance'])
+        number_of_clusters = options['clusters_number']
+        gu_for_cluster = int(self.starting_gu_number / number_of_clusters)
+        for i in range(number_of_clusters):
+            mean_x = self.np_random.uniform(area[0][0] + 250, area[0][1] - 250)
+            mean_y = self.np_random.uniform(area[0][0] + 250, area[0][1] - 250)
+            for j in range(gu_for_cluster):
+                repeat = True
+                while repeat:
+                    # Generazione del numero casuale
+                    x_coordinate = np.random.normal(mean_x, std_dev)
+                    y_coordinate = np.random.normal(mean_y, std_dev)
+                    position = self.grid.get_point(x_coordinate, y_coordinate)
+                    if position.is_in_area(area):
+                        repeat = False
+                gu = GU(position)
+                self.initialize_channel(gu)
+                self.gu.append(gu)
+
+    def initialize_channel(self, gu):
+        for uav in self.uav:
+            distance = self.calculate_distance_uav_gu(uav.position, gu.position)
+            initial_channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
+            sample = random.random()
+            #RAND
+            '''
+            if sample <= initial_channel_PLoS:
+                gu.channels_state.append(0)  # 0 = LoS
+            else:
+                gu.channels_state.append(1)  # 1 = NLoS
+            '''
+            gu.channels_state.append(0)
+
+
+    # GET OBSERVATION
     def normalizePositions(self, position) -> np.ndarray:  # Normalize in [-1,1]
-            max_x = self.window_width / self.resolution
-            max_y = self.window_height / self.resolution
+            max_x = self.window_width * self.resolution
+            max_y = self.window_height * self.resolution
 
             norm_x = (position.x_coordinate / max_x) * 2 - 1
             norm_y = (position.y_coordinate / max_y) * 2 - 1
@@ -98,7 +201,44 @@ class CruiseUAVWithMap(Cruise):
         normalized_actions = np.ndarray(shape=actions.shape, dtype=np.float64)
         normalized_actions = ((actions + self.max_speed_uav) / (2 * self.max_speed_uav)) * 2 - 1
         return normalized_actions
+    
+    def normalizeExplorationMap(self, exploration_map: np.ndarray) -> np.ndarray:  # Normalize in [0,1]
+        # Clippa i valori a max_value (saturazione)
+        clipped_map = np.clip(exploration_map, 0, self.unexplored_point_max_steps)
         
+        # Normalizza in [0,1]
+        normalized_map = clipped_map / self.unexplored_point_max_steps
+        
+        return normalized_map
+   
+    def get_observation(self) -> dict:
+        # map_exploration_states (normalizzata, shape = (window_width, window_height))
+        map_exploration = self.normalizeExplorationMap(self.grid.get_pixel_exploration_map())
+
+        # uav_states: concatena posizioni e azioni normalizzate
+        uav_states = np.zeros((self.uav_number * 2, 2), dtype=np.float64)
+        for i in range(self.uav_number):
+            uav_states[2*i] = self.normalizePositions(self.uav[i].position)
+            last_shift = np.array([self.uav[i].last_shift_x, self.uav[i].last_shift_y])
+            uav_states[2*i + 1] = self.normalizeActions(last_shift)
+
+        # covered_users_states: posizioni normalizzate solo degli utenti coperti
+        covered_users_positions = []
+        for gu in self.gu:
+            if gu.covered:
+                covered_users_positions.append(self.normalizePositions(gu.position))
+        # Assicurati che covered_users_positions abbia lunghezza gu_covered, se no gestisci pad/truncate
+        covered_users_states = np.array(covered_users_positions, dtype=np.float64)
+
+        observation = {
+            "map_exploration_states": map_exploration,
+            "uav_states": uav_states,
+            "covered_users_states": covered_users_states
+        }
+
+        return observation
+    
+    # DO ACTIONS    
     def perform_action(self, actions) -> None:
         self.move_UAV(actions)
         self.update_GU()
@@ -107,21 +247,23 @@ class CruiseUAVWithMap(Cruise):
         self.check_connection_and_coverage_UAV_GU()
 
     def update_GU(self):
-        self.check_if_spawn_new_GU()
+        #RAND
+        #self.check_if_spawn_new_GU()
         self.move_GU()
-        self.check_if_disappear_GU()
+        #RAND
+        #self.check_if_disappear_GU()
 
-    def move_UAV(self, actions):
+    def move_UAV(self, normalized_actions):
+        actions = self.max_speed_uav * normalized_actions
         for i, uav in enumerate(self.uav):
             previous_position = uav.position
-            new_position = Point(previous_position.x_coordinate + actions[i][0],
+            new_position = self.grid.get_point(previous_position.x_coordinate + actions[i][0],
                                  previous_position.y_coordinate + actions[i][1])
             uav.position = new_position
             uav.previous_position = previous_position
             uav.last_shift_x = actions[i][0]
             uav.last_shift_y = actions[i][1]
 
-    # Random walk the GU
     def move_GU(self):
         area = self.np_random.choice(self.grid.spawn_area)
         for gu in self.gu:
@@ -134,13 +276,13 @@ class CruiseUAVWithMap(Cruise):
                 direction = np.random.choice(['up', 'down', 'left', 'right'])
 
                 if direction == 'up':
-                    new_position = Point(previous_position.x_coordinate, previous_position.y_coordinate + distance)
+                    new_position = self.grid.get_point(previous_position.x_coordinate, previous_position.y_coordinate + distance)
                 elif direction == 'down':
-                    new_position = Point(previous_position.x_coordinate, previous_position.y_coordinate - distance)
+                    new_position = self.grid.get_point(previous_position.x_coordinate, previous_position.y_coordinate - distance)
                 elif direction == 'left':
-                    new_position = Point(previous_position.x_coordinate - distance, previous_position.y_coordinate)
+                    new_position = self.grid.get_point(previous_position.x_coordinate - distance, previous_position.y_coordinate)
                 elif direction == 'right':
-                    new_position = Point(previous_position.x_coordinate + distance, previous_position.y_coordinate)
+                    new_position = self.grid.get_point(previous_position.x_coordinate + distance, previous_position.y_coordinate)
 
                 # check if GU exit from environment
                 if new_position.is_in_area(area):
@@ -150,13 +292,13 @@ class CruiseUAVWithMap(Cruise):
                 else:
                     repeat = True
 
-    # calculate distance between one UAV and one GU in air line
+
+    # DO CALCULATIONS AND REWARDS
     def calculate_distance_uav_gu(self, uav: Point, gu: Point):
         return math.sqrt(math.pow(uav.x_coordinate - gu.x_coordinate, 2) +
                         math.pow(uav.y_coordinate - gu.y_coordinate, 2) +
                         self.uav_altitude ** 2)
-    
-    # calculate distance between one UAV and one Point in air line    
+        
     def calculate_distance_uav_point(self, uav: Point, point: Point):
         return math.sqrt(math.pow(uav.x_coordinate - point.x_coordinate, 2) +
                         math.pow(uav.y_coordinate - point.y_coordinate, 2) +
@@ -166,10 +308,15 @@ class CruiseUAVWithMap(Cruise):
         self.pathLoss = []
         for gu in self.gu:
             current_GU_PathLoss = []
+            #RAND
+            '''
             new_channels_state = []
             gu_shift = gu.position.calculate_distance(gu.previous_position)
+            '''
             for index, uav in enumerate(self.uav):
                 distance = self.calculate_distance_uav_gu(uav.position, gu.position)
+                #RAND
+                '''
                 channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
                 relative_shift = uav.position.calculate_distance(uav.previous_position) + gu_shift
                 transition_matrix = self.communication_channel.get_transition_matrix(relative_shift, channel_PLoS)
@@ -177,16 +324,15 @@ class CruiseUAVWithMap(Cruise):
                                                  p=transition_matrix[gu.channels_state[index]])
                 new_channels_state.append(current_state)
                 path_loss = self.communication_channel.get_PathLoss(distance, current_state)
+                '''
+                path_loss = self.communication_channel.get_PathLoss(distance, gu.channels_state[index])
                 current_GU_PathLoss.append(path_loss)
             self.pathLoss.append(current_GU_PathLoss)
+            #RAND
+            '''
             gu.setChannelsState(new_channels_state)
-    
-    '''        
-    def calculate_UAV_connection_area(self):
-        for height in range(self.grid.height_meters):
-            for width
-    '''          
-
+            '''
+             
     def calculate_SINR(self):
         self.SINR = []
         for i in range(len(self.gu)):
@@ -197,7 +343,39 @@ class CruiseUAVWithMap(Cruise):
                 del copy_list[j]
                 current_GU_SINR.append(self.communication_channel.getSINR(current_pathLoss[j], copy_list))
             self.SINR.append(current_GU_SINR)
-
+    
+    '''        
+    def calculate_UAV_connection_area(self):
+        for height in range(self.grid.height_meters):
+            for width
+    ''' 
+    
+    def calculate_RCR_without_uav_i(self, i):
+        tmp_matrix = np.delete(self.connectivity_matrix, i, axis=1)  # Remove i-th column
+        return np.sum(np.any(tmp_matrix, axis=1))
+    
+    def calculate_reward(self, terminated):
+        current_rewards = []
+        for i in range(len(self.uav)):
+            if terminated[i]:
+                current_rewards.append(-2.0)
+            else:
+                current_rewards.append((self.gu_covered - self.calculate_RCR_without_uav_i(i)) / len(self.gu))
+        if self.last_RCR is None:
+            self.last_RCR = current_rewards
+            return [r * 100.0 for r in current_rewards]
+        delta_RCR_smorzato = []
+        for i in range(len(self.uav)):
+            if not terminated[i]:
+                delta_RCR_smorzato.append(self.reward_gamma * (current_rewards[i] - self.last_RCR[i]))
+            else:
+                delta_RCR_smorzato.append(0.0)
+        self.last_RCR = current_rewards
+        reward_smorzato = np.add(current_rewards, delta_RCR_smorzato)
+        return [r * 100.0 for r in reward_smorzato]
+    
+    
+    # CHECKS
     def check_if_disappear_GU(self):
         index_to_remove = []
         for i in range(len(self.gu)):
@@ -220,7 +398,8 @@ class CruiseUAVWithMap(Cruise):
                 area = self.np_random.choice(self.grid.spawn_area)
                 x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
                 y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
-                gu = GU(Point(x_coordinate, y_coordinate))
+                position = self.grid.get_point(x_coordinate, y_coordinate)
+                gu = GU(position)
                 self.initialize_channel(gu)
                 self.gu.append(gu)
         # update disappear gu probability
@@ -228,7 +407,7 @@ class CruiseUAVWithMap(Cruise):
 
     def check_connection_and_coverage_UAV_GU(self):
         covered = 0
-        self.connectivity_matrix = np.zeros((len(self.gu), self.uav_number), dtype=int)
+        self.connectivity_matrix = np.zeros((len(self.gu), len(self.uav)), dtype=int)
         for i, gu in enumerate(self.gu):
             gu.setCovered(False)
             current_SINR = self.SINR[i]
@@ -240,31 +419,20 @@ class CruiseUAVWithMap(Cruise):
                 covered += 1
         self.gu_covered = covered
 
-    def get_observation(self) -> np.ndarray:
-        observation = [self.normalizePositions(self.uav[0].position)]
-        
-        observation = np.append(observation, [self.normalizeActions(np.array([self.uav[0].last_shift_x, self.uav[0].last_shift_y]))], axis=0)
-        
-        for i in range(1, self.uav_number):
-            observation = np.append(observation, [self.normalizePositions(self.uav[i].position)], axis=0)
-            observation = np.append(observation, [self.normalizeActions(np.array([self.uav[i].last_shift_x, self.uav[i].last_shift_y]))], axis=0)
-
-        for gu in self.gu:
-            if gu.covered:
-                observation = np.append(observation, [self.normalizePositions(gu.position)], axis=0)
-        return observation
-
+    def check_if_truncated(self) -> bool:
+        return False
+    
     def check_if_terminated(self):
         terminated_matrix = []
         area = self.np_random.choice(self.grid.spawn_area)
         for i, uav in enumerate(self.uav):
-            if not uav.position.is_in_area(area) or self.collision(i, uav):
+            if not uav.position.is_in_area(area) or self.check_collision(i, uav):
                 terminated_matrix.append(True)
             else:
                 terminated_matrix.append(False)
         return terminated_matrix
 
-    def collision(self, current_uav_index, uav) -> bool:
+    def check_collision(self, current_uav_index, uav) -> bool:
         collision = False
         for j, other_uav in enumerate(self.uav):
             if j != current_uav_index:
@@ -273,121 +441,16 @@ class CruiseUAVWithMap(Cruise):
                     break
         return collision
 
-    def check_if_truncated(self) -> bool:
-        return False
-
-    def RCR_without_uav_i(self, i):
-        tmp_matrix = np.delete(self.connectivity_matrix, i, axis=1)  # Remove i-th column
-        return np.sum(np.any(tmp_matrix, axis=1))
-
-    def calculate_reward(self, terminated):
-        current_rewards = []
-        for i in range(len(self.uav)):
-            if terminated[i]:
-                current_rewards.append(-2.0)
-            else:
-                current_rewards.append((self.gu_covered - self.RCR_without_uav_i(i)) / len(self.gu))
-        if self.last_RCR is None:
-            self.last_RCR = current_rewards
-            return [r * 100.0 for r in current_rewards]
-        delta_RCR_smorzato = []
-        for i in range(len(self.uav)):
-            if not terminated[i]:
-                delta_RCR_smorzato.append(self.reward_gamma * (current_rewards[i] - self.last_RCR[i]))
-            else:
-                delta_RCR_smorzato.append(0.0)
-        self.last_RCR = current_rewards
-        reward_smorzato = np.add(current_rewards, delta_RCR_smorzato)
-        return [r * 100.0 for r in reward_smorzato]
-
-    def init_environment(self, options: Optional[dict] = None) -> None:
-        self.init_uav()
-        if not options["clustered"]:
-            self.init_gu()
-        else:
-            self.init_gu_clustered(options)
-        self.calculate_PathLoss_with_Markov_Chain()
-        self.calculate_SINR()
-        self.check_connection_and_coverage_UAV_GU()
-
-    def init_uav(self) -> None:
-        area = self.np_random.choice(self.grid.spawn_area)
-        # x_coordinate = self.np_random.uniform(area[0][0] + 800, area[0][1] - 800)
-        x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
-        y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
-        self.uav.append(UAV(Point(x_coordinate, y_coordinate)))
-        for i in range(1, self.uav_number):
-            x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
-            y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
-            position = Point(x_coordinate, y_coordinate)
-            while self.are_too_close(i, position):
-                x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
-                y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
-                position = Point(x_coordinate, y_coordinate)
-            self.uav.append(UAV(position))
-
-    def are_too_close(self, uav_index, position):
+    def check_if_are_too_close(self, uav_index, position):
         too_close = False
         for j in range(uav_index):
             if self.uav[j].position.calculate_distance(position) <= self.minimum_starting_distance_between_uav:
                 too_close = True
                 break
         return too_close
-
-    def init_gu(self) -> None:
-        area = self.np_random.choice(self.grid.spawn_area)
-        for _ in range(self.starting_gu_number):
-            x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
-            y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
-            gu = GU(Point(x_coordinate, y_coordinate))
-            self.initialize_channel(gu)
-            self.gu.append(gu)
-
-    def reset_gu(self, options: Optional[dict] = None) -> np.ndarray:
-        self.gu = []
-        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
-        self.gu_covered = 0
-        self.last_RCR = None
-        if not options['clustered']:
-            self.init_gu()
-        else:
-            self.init_gu_clustered(options)
-        self.calculate_PathLoss_with_Markov_Chain()
-        self.calculate_SINR()
-        self.check_connection_and_coverage_UAV_GU()
-        return self.get_observation()
-
-    def init_gu_clustered(self, options: Optional[dict] = None) -> None:
-        area = self.np_random.choice(self.grid.spawn_area)
-        std_dev = np.sqrt(options['variance'])
-        number_of_clusters = options['clusters_number']
-        gu_for_cluster = int(self.starting_gu_number / number_of_clusters)
-        for i in range(number_of_clusters):
-            mean_x = self.np_random.uniform(area[0][0] + 250, area[0][1] - 250)
-            mean_y = self.np_random.uniform(area[0][0] + 250, area[0][1] - 250)
-            for j in range(gu_for_cluster):
-                repeat = True
-                while repeat:
-                    # Generazione del numero casuale
-                    x_coordinate = np.random.normal(mean_x, std_dev)
-                    y_coordinate = np.random.normal(mean_y, std_dev)
-                    position = Point(x_coordinate, y_coordinate)
-                    if position.is_in_area(area):
-                        repeat = False
-                gu = GU(position)
-                self.initialize_channel(gu)
-                self.gu.append(gu)
-
-    def initialize_channel(self, gu):
-        for uav in self.uav:
-            distance = self.calculate_distance_uav_gu(uav.position, gu.position)
-            initial_channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
-            sample = random.random()
-            if sample <= initial_channel_PLoS:
-                gu.channels_state.append(0)  # 0 = LoS
-            else:
-                gu.channels_state.append(1)  # 1 = NLoS
-
+    
+    
+    # PYGAME METHODS
     def draw(self, canvas: Surface) -> None:
         # CANVAS
         canvas.fill(Color.WHITE.value)
@@ -424,10 +487,12 @@ class CruiseUAVWithMap(Cruise):
         pygame_y = (self.window_height - round(point.y_coordinate * self.resolution) - shiftY + self.y_offset)
         return pygame_x, pygame_y
 
+    
+    # INFO METHODS
     def create_info(self, terminated) -> dict:
         collision = False
         for i, uav in enumerate(self.uav):
-            if self.collision(i, uav):
+            if self.check_collision(i, uav):
                 collision = True
                 break
         if collision:

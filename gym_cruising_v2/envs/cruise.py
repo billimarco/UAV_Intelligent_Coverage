@@ -26,6 +26,8 @@ class Cruise(Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 8}
 
     def __init__(self, args, render_mode=None) -> None:
+        self.args = args
+        
         self.window_width = args.window_width  # The width size of the PyGame window
         self.window_height = args.window_height  # The height size of the PyGame window
         self.grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset)

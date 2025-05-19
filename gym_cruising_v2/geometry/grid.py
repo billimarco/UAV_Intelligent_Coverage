@@ -1,8 +1,7 @@
-""" This module contains the Grid enum """
-from enum import Enum
 from typing import Tuple
 from typing import List
 
+import numpy as np
 from gym_cruising_v2.geometry.line import Line
 from gym_cruising_v2.geometry.point import Point
 from gym_cruising_v2.geometry.pixel import Pixel
@@ -19,13 +18,15 @@ class Grid:
                  window_width: int,
                  window_height: int,
                  resolution: float,
-                 spawn_offset: int):
+                 spawn_offset: int,
+                 unexplored_point_max_steps: int):
         self.window_width = window_width
         self.window_height = window_height
         self.resolution = resolution
         self.spawn_offset = spawn_offset
+        self.unexplored_point_max_steps = unexplored_point_max_steps
 
-        self.pixel_grid = [[Pixel(i, j, resolution) for j in range(window_height)] for i in range(window_width)]
+        self.pixel_grid = [[Pixel(i, j, resolution, unexplored_point_max_steps) for j in range(window_height)] for i in range(window_width)]
 
         # Costruisci i muri (cornice rettangolare)
         '''
@@ -43,5 +44,52 @@ class Grid:
         self.spawn_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (
             ((spawn_offset_res, window_width*resolution  - spawn_offset_res), (spawn_offset_res, window_height*resolution - spawn_offset_res)),
         )
+    
+    def reset(self):
+        self.pixel_grid = [[Pixel(i, j, self.resolution, self.unexplored_point_max_steps) for j in range(self.window_height)] for i in range(self.window_width)]
 
-    # numero, linee muri e area dove oggetti possono apparire (spawnare)
+    def get_pixel(self, x: int, y: int) -> Pixel:
+        """Restituisce il Pixel alla posizione (x, y) nella griglia di pixel."""
+        if 0 <= x < self.window_width and 0 <= y < self.window_height:
+            return self.pixel_grid[x][y]
+        else:
+            raise IndexError(f"Pixel coordinates out of bounds: ({x}, {y})")
+
+    def get_point(self, x: int, y: int) -> Point:
+        """
+        Restituisce il Point globale alla posizione (x, y) in coordinate punto (non pixel).
+        Converte (x, y) assoluti in indici di pixel e posizione relativa nel point_grid.
+        """
+        if 0 <= x < self.window_width * self.resolution and 0 <= y < self.window_height * self.resolution:
+            pixel_x = x // self.resolution
+            pixel_y = y // self.resolution
+            local_x = x % self.resolution
+            local_y = y % self.resolution
+            return self.pixel_grid[pixel_x][pixel_y].point_grid[local_x][local_y]
+        else:
+            raise IndexError(f"Point coordinates out of bounds: ({x}, {y})")
+
+    def get_pixel_exploration_map(self) -> np.ndarray:
+        exploration_map = np.zeros((self.window_width, self.window_height), dtype=np.float32)
+        for i, row in enumerate(self.pixel_grid):
+            for j, pixel in enumerate(row):
+                # Ad esempio prendo mean_step_from_last_visit, o sostituisci con l'attributo corretto
+                exploration_map[i, j] = pixel.mean_step_from_last_visit
+        return exploration_map
+    
+    def get_point_exploration_map(self) -> np.ndarray:
+        total_width = self.window_width * self.resolution
+        total_height = self.window_height * self.resolution
+
+        exploration_map = np.zeros((total_width, total_height), dtype=np.float32)
+
+        for i in range(self.window_width):
+            for j in range(self.window_height):
+                pixel = self.pixel_grid[i][j]
+                for x in range(self.resolution):
+                    for y in range(self.resolution):
+                        point = pixel.point_grid[x][y]
+                        exploration_map[i * self.resolution + x, j * self.resolution + y] = point.step_from_last_visit
+
+        return exploration_map
+                

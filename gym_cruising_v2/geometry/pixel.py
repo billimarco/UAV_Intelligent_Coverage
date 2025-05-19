@@ -15,21 +15,22 @@ class Pixel:
     color: Tuple[int, int, int]
     point_grid: List[List[Point]] # resolution * resolution in m^2
     mean_step_from_last_visit: float
+    unexplored_point_max_steps: int
 
-    def __init__(self, x_coordinate: float, y_coordinate: float, resolution: int) -> None:
+    def __init__(self, x_coordinate: float, y_coordinate: float, resolution: int, unexplored_point_max_steps: int) -> None:
         self.x_coordinate = x_coordinate
         self.y_coordinate = y_coordinate
         self.color = (255, 255, 255)
-        self.point_grid = [[Point(i + x_coordinate*resolution, j+ y_coordinate*resolution) for j in range(resolution)] for i in range(resolution)]
-        self.calculate_mean_step_from_last_visit()
+        self.point_grid = [[Point(i + x_coordinate*resolution, j+ y_coordinate*resolution, unexplored_point_max_steps) for j in range(resolution)] for i in range(resolution)]
+        self.mean_step_from_last_visit = 0
+        self.unexplored_point_max_steps = unexplored_point_max_steps
 
-    def is_in_area(self, area: np.ndarray) -> bool:
-        if self.x_coordinate <= area[0, 0] or self.x_coordinate >= area[0, 1]:
-            return False
-        if self.y_coordinate <= area[1, 0] or self.y_coordinate >= area[1, 1]:
-            return False
-        return True
-    
+    def increment_step_from_last_visit_for_points(self):
+        for row in self.point_grid:
+            for point in row:
+                point.increment_step_from_last_visit()
+        self.calculate_mean_step_from_last_visit()
+        
     def calculate_mean_step_from_last_visit(self):
         total = 0
         count = 0
@@ -43,11 +44,12 @@ class Pixel:
             self.mean_step_from_last_visit = total / count
         else:
             self.mean_step_from_last_visit = 0
-
+        
+        self.define_color()
     
     def define_color(self):
-        #TODO c'è da decidere come calcolarlo in base al mean_step_from_last_visit
-        return (255, 255, 255)
+        rgb_value = 255 - math.floor(255 * (self.mean_step_from_last_visit / self.unexplored_point_max_steps))
+        return (rgb_value, rgb_value, rgb_value)
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, Point)

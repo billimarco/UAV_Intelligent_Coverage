@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument("--wandb-entity", type=str, default="marcolbilli-universit-di-firenze",
                         help="the entity (team) of wandb's project")
     
-    
+    # Algorithm specific arguments
     parser.add_argument("--alg", type=str, default="PPO", nargs="?", const="PPO",
                         help="Algorithm to use: PPO, TD3")
     parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -53,21 +53,43 @@ def parse_args():
                         help="visualize an enviroment using trained model")
     parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="numerical test using trained model")
+    parser.add_argument("--reward-gamma", type=float, default=0.7,
+                        help="Reward gamma for value function")
     
-    # Environment specific arguments
+    # UAV specific arguments
     parser.add_argument("--max-uav-number", type=int, default=3,
                         help="the max number of UAVs in the environment")
     parser.add_argument("--uav-number", type=int, default=3,
                         help="the number of UAVs in the environment (not more than max-uav-number)")
+    parser.add_argument("--max-speed-uav", type=float, default=55.6,
+                        help="maximum speed of a UAV in meters per second")
+    parser.add_argument("--uav-altitude", type=float, default=500,
+                    help="UAV flight altitude in meters")
+    parser.add_argument("--minimum-starting-distance-between-uav", type=float, default=200.0,
+                    help="minimum initial distance between UAVs in meters")
+    parser.add_argument("--collision-distance", type=float, default=10.0,
+                        help="minimum distance between UAVs before a collision is considered (in meters)")
+    
+    # GU specific arguments
     parser.add_argument("--starting-gu-number", type=int, default=30,
                         help="the number of starting ground units in the environment")
+    parser.add_argument("--spawn-gu-prob", type=float, default=0.0005,
+                        help="probability of spawning a ground unit per cell or timestep")
+    parser.add_argument("--gu-mean-speed", type=float, default=5.56,
+                        help="mean speed of ground units in meters per second")
+    parser.add_argument("--gu-standard-deviation", type=float, default=1.97,
+                        help="standard deviation of ground unit speed in meters per second")
+    parser.add_argument("--covered-threshold", type=float, default=10.0,
+                        help="coverage signal threshold in dB below which a GU is considered covered")
+    
+    # Grid specific arguments
     parser.add_argument("--window-width", type=int, default=1000,
                         help="the width size of the PyGame window")
     parser.add_argument("--window-height", type=int, default=1000,
                         help="the height size of the PyGame window")
     parser.add_argument("--spawn-offset" , type=int, default=15,
                         help="the spawn offset of the environment")
-    parser.add_argument("--resolution", type=float, default=4,
+    parser.add_argument("--resolution", type=int, default=4,
                     help="meters for every pixel side (num of points for pixel side)")
     parser.add_argument("--x-offset", type=float, default=0,
                         help="the x offset of the environment")
@@ -75,22 +97,8 @@ def parse_args():
                         help="the y offset of the environment")
     parser.add_argument("--wall-width", type=float, default=3,
                         help="the width of the walls in the environment")
-    parser.add_argument("--minimum-starting-distance-between-uav", type=float, default=200.0,
-                    help="minimum initial distance between UAVs in meters")
-    parser.add_argument("--collision-distance", type=float, default=10.0,
-                        help="minimum distance between UAVs before a collision is considered (in meters)")
-    parser.add_argument("--spawn-gu-prob", type=float, default=0.0005,
-                        help="probability of spawning a ground unit per cell or timestep")
-    parser.add_argument("--gu-mean-speed", type=float, default=5.56,
-                        help="mean speed of ground units in meters per second")
-    parser.add_argument("--gu-standard-deviation", type=float, default=1.97,
-                        help="standard deviation of ground unit speed in meters per second")
-    parser.add_argument("--max-speed-uav", type=float, default=55.6,
-                        help="maximum speed of a UAV in meters per second")
-    parser.add_argument("--covered-threshold", type=float, default=10.0,
-                        help="coverage signal threshold in dB below which a GU is considered covered")
-    parser.add_argument("--uav-altitude", type=float, default=500,
-                    help="UAV flight altitude in meters")
+    parser.add_argument("--unexplored-point-max-steps", type=int, default=50,
+                        help="maximum steps at which we define a point completely unexplored. Increments of maximum steps stops")
     
     # Channels specific arguments
     parser.add_argument("--a", type=float, default=12.08,
@@ -110,7 +118,7 @@ def parse_args():
     parser.add_argument("--noise-psd", type=float, default=-174,
                         help="Power spectral density of noise in dBm/Hz")
     
-    #Clustered environment specific arguments
+    # Clustered environment specific arguments
     parser.add_argument("--clustered", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, GU are clustered")
     parser.add_argument("--clusters-number", type=int, default=1,
@@ -120,7 +128,7 @@ def parse_args():
     parser.add_argument("--clusters-variance-max", type=int, default=100000,
                         help="the maximum variance of the clusters")
     
-    # Algorithm specific arguments
+    # PPO specific arguments
     parser.add_argument("--num-envs", type=int, default=8,
                         help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=384,
