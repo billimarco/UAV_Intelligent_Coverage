@@ -13,6 +13,7 @@ class Pixel:
     x_coordinate: float
     y_coordinate: float
     color: Tuple[int, int, int]
+    covered: bool
     point_grid: List[List[Point]] # resolution * resolution in m^2
     mean_step_from_last_visit: float
     unexplored_point_max_steps: int
@@ -21,6 +22,7 @@ class Pixel:
         self.x_coordinate = x_coordinate
         self.y_coordinate = y_coordinate
         self.color = (255, 255, 255)
+        self.covered = False
         self.point_grid = [[Point(i + x_coordinate*resolution, j+ y_coordinate*resolution, unexplored_point_max_steps) for j in range(resolution)] for i in range(resolution)]
         self.mean_step_from_last_visit = 0
         self.unexplored_point_max_steps = unexplored_point_max_steps
@@ -48,8 +50,27 @@ class Pixel:
         self.define_color()
     
     def define_color(self):
-        rgb_value = 255 - math.floor(255 * (self.mean_step_from_last_visit / self.unexplored_point_max_steps))
-        return (rgb_value, rgb_value, rgb_value)
+        covered_points = self.calculate_coverage
+        if not self.covered:
+            rgb_value = 255 - math.floor(255 * (self.mean_step_from_last_visit / self.unexplored_point_max_steps))
+            self.color = (rgb_value, rgb_value, rgb_value)
+        else:
+            r_value = math.floor(255 * (covered_points/len(self.point_grid)))
+            self.color = (r_value, 0, 0)
+            
+    def calculate_coverage(self) -> int:
+        covered_points = 0
+        for row in self.point_grid:
+            for point in row:
+                if (point.covered):
+                    covered_points += 1
+        
+        if covered_points > 0:
+            self.covered = True
+        else:
+            self.covered = False
+            
+        return covered_points
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, Point)

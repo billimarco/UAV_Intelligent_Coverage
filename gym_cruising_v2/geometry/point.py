@@ -12,6 +12,7 @@ class Point:
 
     x_coordinate: float
     y_coordinate: float
+    covered: bool
     step_from_last_visit: int # Quanti step fa è stato visitato
     unexplored_point_max_steps: int
 
@@ -39,6 +40,9 @@ class Point:
         
     def reset_step_from_last_visit(self):
         self.step_from_last_visit = 0
+        
+    def set_covered(self, covered):
+        self.covered = covered
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, Point)

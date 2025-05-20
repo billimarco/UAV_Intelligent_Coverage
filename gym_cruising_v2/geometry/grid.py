@@ -48,27 +48,43 @@ class Grid:
     def reset(self):
         self.pixel_grid = [[Pixel(i, j, self.resolution, self.unexplored_point_max_steps) for j in range(self.window_height)] for i in range(self.window_width)]
 
-    def get_pixel(self, x: int, y: int) -> Pixel:
+    def get_pixel(self, pixel_x: int, pixel_y: int) -> Pixel:
         """Restituisce il Pixel alla posizione (x, y) nella griglia di pixel."""
-        if 0 <= x < self.window_width and 0 <= y < self.window_height:
-            return self.pixel_grid[x][y]
+        if 0 <= pixel_x < self.window_width and 0 <= pixel_y < self.window_height:
+            return self.pixel_grid[pixel_x][pixel_y]
         else:
-            raise IndexError(f"Pixel coordinates out of bounds: ({x}, {y})")
+            raise IndexError(f"Pixel coordinates out of bounds: ({pixel_x}, {pixel_y})")
 
-    def get_point(self, x: int, y: int) -> Point:
+    def get_point(self, point_x: int, point_y: int) -> Point:
         """
         Restituisce il Point globale alla posizione (x, y) in coordinate punto (non pixel).
         Converte (x, y) assoluti in indici di pixel e posizione relativa nel point_grid.
         """
-        if 0 <= x < self.window_width * self.resolution and 0 <= y < self.window_height * self.resolution:
-            pixel_x = x // self.resolution
-            pixel_y = y // self.resolution
-            local_x = x % self.resolution
-            local_y = y % self.resolution
+        if 0 <= point_x < self.window_width * self.resolution and 0 <= point_y < self.window_height * self.resolution:
+            pixel_x = point_x // self.resolution
+            pixel_y = point_y // self.resolution
+            local_x = point_x % self.resolution
+            local_y = point_y % self.resolution
             return self.pixel_grid[pixel_x][pixel_y].point_grid[local_x][local_y]
         else:
-            raise IndexError(f"Point coordinates out of bounds: ({x}, {y})")
+            raise IndexError(f"Point coordinates out of bounds: ({point_x}, {point_y})")
 
+    def get_pixel_from_point(self, point:Point) -> Pixel:
+        if 0 <= point.x_coordinate < self.window_width * self.resolution and 0 <= point.y_coordinate < self.window_height * self.resolution:
+            pixel_x = point.x_coordinate // self.resolution
+            pixel_y = point.y_coordinate // self.resolution
+            return self.pixel_grid[pixel_x][pixel_y]
+        else:
+            raise IndexError(f"Point coordinates out of bounds: ({point_x}, {point_y})")
+        
+    def get_pixel_from_point_coordinate(self, point_x:int, point_y:int) -> Pixel:
+        if 0 <= point_x < self.window_width * self.resolution and 0 <= point_y < self.window_height * self.resolution:
+            pixel_x = point_x // self.resolution
+            pixel_y = point_y // self.resolution
+            return self.pixel_grid[pixel_x][pixel_y]
+        else:
+            raise IndexError(f"Point coordinates out of bounds: ({point_x}, {point_y})")
+        
     def get_pixel_exploration_map(self) -> np.ndarray:
         exploration_map = np.zeros((self.window_width, self.window_height), dtype=np.float32)
         for i, row in enumerate(self.pixel_grid):

@@ -72,7 +72,7 @@ class CruiseUAVWithMap(Cruise):
         self.high_observation = np.tile(high, (obs_shape[0], 1))
         '''
         self.observation_space = self.observation_space = spaces.Dict({
-            "map_exploration_states": spaces.Box(low=0, high=+1, shape=(self.window_width, self.window_height), dtype=np.float32),
+            "map_exploration_states": spaces.Box(low=0, high=+1, shape=(self.window_width*self.resolution, self.window_height*self.resolution), dtype=np.float32),
             "uav_states": spaces.Box(low=-1, high=+1, shape=(self.uav_number * 2, 2), dtype=np.float64),
             "covered_users_states": spaces.Box(low=-1, high=+1, shape=(self.gu_covered, 2), dtype=np.float64)
         })
@@ -112,6 +112,7 @@ class CruiseUAVWithMap(Cruise):
             self.init_gu_clustered(options)
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
+        self.calculate_UAVs_connection_area()
         self.check_connection_and_coverage_UAV_GU()
         return self.get_observation()
     
@@ -125,6 +126,7 @@ class CruiseUAVWithMap(Cruise):
             self.init_gu_clustered(options)
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
+        self.calculate_UAVs_connection_area()
         self.check_connection_and_coverage_UAV_GU()
  
     def init_uav(self) -> None:
@@ -213,7 +215,7 @@ class CruiseUAVWithMap(Cruise):
    
     def get_observation(self) -> dict:
         # map_exploration_states (normalizzata, shape = (window_width, window_height))
-        map_exploration = self.normalizeExplorationMap(self.grid.get_pixel_exploration_map())
+        map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
 
         # uav_states: concatena posizioni e azioni normalizzate
         uav_states = np.zeros((self.uav_number * 2, 2), dtype=np.float64)
@@ -238,12 +240,14 @@ class CruiseUAVWithMap(Cruise):
 
         return observation
     
+    
     # DO ACTIONS    
     def perform_action(self, actions) -> None:
         self.move_UAV(actions)
         self.update_GU()
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
+        self.calculate_UAVs_connection_area()
         self.check_connection_and_coverage_UAV_GU()
 
     def update_GU(self):
@@ -344,26 +348,86 @@ class CruiseUAVWithMap(Cruise):
                 current_GU_SINR.append(self.communication_channel.getSINR(current_pathLoss[j], copy_list))
             self.SINR.append(current_GU_SINR)
     
-    '''        
-    def calculate_UAV_connection_area(self):
-        for height in range(self.grid.height_meters):
-            for width
-    ''' 
-    
+    def calculate_UAVs_connection_area(self):
+        distance_LoS_coverage = self.communication_channel.get_distance_from_SINR_closed_form(self.covered_threshold,0)
+        
+        uav_points = []
+        uav_pixels = []
+        for index, uav in enumerate(self.uav):
+            uav_point = self.grid.get_point(uav.position.x_coordinate, uav.position.y_coordinate)
+            uav_points.append(uav_point)
+            uav_pixel = self.grid.get_pixel_from_point(uav_point)
+            uav_pixels.append(uav_pixel)
+        
+        total_uavs_point_coverage = 0
+        simultaneous_uavs_point_coverage = 0
+        
+        for pixel in self.grid.pixel_grid:
+            for point in pixel.point_grid:
+                point_covered = False
+                point_covered_more_than_one = False
+                for uav_point in uav_points:
+                    if(self.calculate_distance_uav_point(uav_point, point) <= distance_LoS_coverage):
+                        total_uavs_point_coverage +=1
+                        if not point_covered:
+                            point_covered = True
+                        elif point_covered:
+                            simultaneous_uavs_point_coverage +=1
+                if point_covered:       
+                    point.set_covered(True)
+                    point.reset_step_from_last_visit()
+                else:
+                    point.increment_step_from_last_visit()
+            pixel.calculate_mean_step_from_last_visit()
+            
+        return total_uavs_point_coverage, simultaneous_uavs_point_coverage
+
     def calculate_RCR_without_uav_i(self, i):
         tmp_matrix = np.delete(self.connectivity_matrix, i, axis=1)  # Remove i-th column
         return np.sum(np.any(tmp_matrix, axis=1))
     
     def calculate_reward(self, terminated):
-        current_rewards = []
+        # REWARD GLOBALE
+        global_reward = 0
+        
+        # Calcolo dell'entropia per distribuzione equa degli UAV sui GU coperti (1 distribuzione equa, 0 distribuzione sbilanciata)
+        contributions = []
+        for i in range(len(self.uav)):
+            contribution = self.gu_covered - self.calculate_RCR_without_uav_i(i)
+            contributions.append(max(contribution, 1e-8))  # evita log(0)
+        sum_contributions = sum(contributions)
+        proportions = [c / sum_contributions for c in contributions] if sum_contributions > 0 else [1.0 / len(contributions)] * len(contributions)
+        entropy = -sum(p * np.log2(p) for p in proportions) # Calcola entropia della distribuzione dei contributi
+        max_entropy = np.log2(len(self.uav)) # Entropia massima possibile (copertura perfettamente equa)
+        entropy_contribution_score = entropy / max_entropy if max_entropy > 0 else 0.0  # normalizzata [0,1]
+        global_reward += entropy_contribution_score
+        
+        # Calcolo copertura spaziale (pixel coperti rispetto a quelli che potrebbero coprire)
+        total_uavs_point_coverage, simultaneous_uavs_point_coverage = self.calculate_UAVs_connection_area
+        spatial_coverage = (total_uavs_point_coverage - simultaneous_uavs_point_coverage) / total_uavs_point_coverage
+        global_reward += spatial_coverage
+        
+        # Calcolo dell'incentivo per l'esplorazione di aree inesplorate
+        map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
+        exploration_incentive = 1 - np.mean(map_exploration)
+        global_reward += exploration_incentive
+            
+        # REWARD INDIVIDUALE
+        rewards = []
         for i in range(len(self.uav)):
             if terminated[i]:
-                current_rewards.append(-2.0)
+                rewards.append(-2.0)
             else:
-                current_rewards.append((self.gu_covered - self.calculate_RCR_without_uav_i(i)) / len(self.gu))
+                # reward = weighted sum: individual contribution + fairness via entropy
+                contribution_score = contributions[i] / self.gu_covered if self.gu_covered > 0 else 0.0
+                reward = alpha * contribution_score + beta * entropy_contribution_score
+                rewards.append(reward)
+                
+                
         if self.last_RCR is None:
             self.last_RCR = current_rewards
             return [r * 100.0 for r in current_rewards]
+        
         delta_RCR_smorzato = []
         for i in range(len(self.uav)):
             if not terminated[i]:
