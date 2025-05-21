@@ -75,7 +75,7 @@ class Grid:
             pixel_y = point.y_coordinate // self.resolution
             return self.pixel_grid[pixel_x][pixel_y]
         else:
-            raise IndexError(f"Point coordinates out of bounds: ({point_x}, {point_y})")
+            raise IndexError(f"Point coordinates out of bounds: ({point.x_coordinate}, {point.y_coordinate})")
         
     def get_pixel_from_point_coordinate(self, point_x:int, point_y:int) -> Pixel:
         if 0 <= point_x < self.window_width * self.resolution and 0 <= point_y < self.window_height * self.resolution:

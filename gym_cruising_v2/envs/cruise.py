@@ -30,7 +30,8 @@ class Cruise(Env):
         
         self.window_width = args.window_width  # The width size of the PyGame window
         self.window_height = args.window_height  # The height size of the PyGame window
-        self.grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset)
+        self.unexplored_point_max_steps = args.unexplored_point_max_steps
+        self.grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset, args.unexplored_point_max_steps)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode

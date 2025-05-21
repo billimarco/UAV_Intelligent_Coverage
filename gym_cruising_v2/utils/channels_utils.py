@@ -77,8 +77,7 @@ class CommunicationChannel:
         :param current_state: 0 = LoS, 1 = NLoS
         :return: distanza (in metri)
         """
-        noise_watt = self.dBm2Watt(self.power_spectral_density_of_noise) * self.channel_bandwidth
-        noise_db = self.W2dB(noise_watt)
+        noise_db = self.power_spectral_density_of_noise + 10 * math.log10(self.channel_bandwidth)
         
         additional_loss = self.nLos if current_state == 0 else self.nNLos
         

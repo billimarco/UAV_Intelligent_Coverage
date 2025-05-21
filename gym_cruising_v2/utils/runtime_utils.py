@@ -53,8 +53,16 @@ def parse_args():
                         help="visualize an enviroment using trained model")
     parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="numerical test using trained model")
-    parser.add_argument("--reward-gamma", type=float, default=0.7,
-                        help="Reward gamma for value function")
+    
+    # NN specific arguments
+    parser.add_argument("--embedded-dim", type=int, default=32,
+                    help="Size of the embedding vector used to represent agent observations or features")
+    
+    # Reward specific arguments
+    parser.add_argument("--alpha", type=float, default=0.4,
+                    help="Weight for the individual reward (UAV's coverage contribution)")
+    parser.add_argument("--beta", type=float, default=0.6,
+                        help="Weight for the global reward (fairness, spatial coverage, exploration)")
     
     # UAV specific arguments
     parser.add_argument("--max-uav-number", type=int, default=3,
@@ -80,16 +88,16 @@ def parse_args():
     parser.add_argument("--gu-standard-deviation", type=float, default=1.97,
                         help="standard deviation of ground unit speed in meters per second")
     parser.add_argument("--covered-threshold", type=float, default=10.0,
-                        help="coverage signal threshold in dB below which a GU is considered covered")
+                        help="SINR threshold (in dB) above which a ground user is considered covered")
     
     # Grid specific arguments
-    parser.add_argument("--window-width", type=int, default=1000,
+    parser.add_argument("--window-width", type=int, default=256,
                         help="the width size of the PyGame window")
-    parser.add_argument("--window-height", type=int, default=1000,
+    parser.add_argument("--window-height", type=int, default=256,
                         help="the height size of the PyGame window")
     parser.add_argument("--spawn-offset" , type=int, default=15,
                         help="the spawn offset of the environment")
-    parser.add_argument("--resolution", type=int, default=4,
+    parser.add_argument("--resolution", type=int, default=1,
                     help="meters for every pixel side (num of points for pixel side)")
     parser.add_argument("--x-offset", type=float, default=0,
                         help="the x offset of the environment")
@@ -111,7 +119,7 @@ def parse_args():
                         help="Path loss for LoS in dB (1.6 in dense urban)")
     parser.add_argument("--rate-of-growth", type=float, default=-0.05,
                         help="Rate of growth for some propagation model parameter")
-    parser.add_argument("--transmission-power", type=float, default=23,
+    parser.add_argument("--transmission-power", type=float, default=-6.3,
                         help="Transmission power in dBm")
     parser.add_argument("--channel-bandwidth", type=float, default=2e6,
                         help="Channel bandwidth in Hz (e.g. 2e6 for 2 MHz)")
