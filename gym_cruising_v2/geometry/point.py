@@ -10,27 +10,28 @@ import numpy as np
 class Point:
     """ A point in Cartesian plane. """
 
-    x_coordinate: float
-    y_coordinate: float
+    point_x: int
+    point_y: int
     covered: bool
     step_from_last_visit: int # Quanti step fa è stato visitato
     unexplored_point_max_steps: int
 
-    def __init__(self, x_coordinate: float, y_coordinate: float, unexplored_point_max_steps: int) -> None:
-        self.x_coordinate = x_coordinate
-        self.y_coordinate = y_coordinate
-        self.step_from_last_visit = 0
+    def __init__(self, point_x: int, point_y: int, unexplored_point_max_steps: int) -> None:
+        self.point_x = point_x
+        self.point_y = point_y
+        self.covered = False
+        self.step_from_last_visit = unexplored_point_max_steps #Serve per incentivare esplorazione iniziale
         self.unexplored_point_max_steps = unexplored_point_max_steps
 
     def calculate_distance(self, other: Point) -> float:
         """ Calculate the Euclidean distance between two points. """
-        return math.sqrt((self.x_coordinate - other.x_coordinate) ** 2
-                         + (self.y_coordinate - other.y_coordinate) ** 2)
+        return math.sqrt((self.point_x - other.point_x) ** 2
+                         + (self.point_y - other.point_y) ** 2)
 
     def is_in_area(self, area: np.ndarray) -> bool:
-        if self.x_coordinate <= area[0, 0] or self.x_coordinate >= area[0, 1]:
+        if self.point_x <= area[0, 0] or self.point_x >= area[0, 1]:
             return False
-        if self.y_coordinate <= area[1, 0] or self.y_coordinate >= area[1, 1]:
+        if self.point_y <= area[1, 0] or self.point_y >= area[1, 1]:
             return False
         return True
     
@@ -46,8 +47,8 @@ class Point:
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, Point)
-                and math.isclose(self.x_coordinate, other.x_coordinate)
-                and math.isclose(self.y_coordinate, other.y_coordinate))
+                and math.isclose(self.point_x, other.point_x)
+                and math.isclose(self.point_y, other.point_y))
 
     def __repr__(self) -> str:
-        return f'({self.x_coordinate}, {self.y_coordinate})'
+        return f'({self.point_x}, {self.point_y})'

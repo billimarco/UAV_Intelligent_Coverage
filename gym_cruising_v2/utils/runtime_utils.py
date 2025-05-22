@@ -97,7 +97,7 @@ def parse_args():
                         help="the height size of the PyGame window")
     parser.add_argument("--spawn-offset" , type=int, default=15,
                         help="the spawn offset of the environment")
-    parser.add_argument("--resolution", type=int, default=1,
+    parser.add_argument("--resolution", type=int, default=2,
                     help="meters for every pixel side (num of points for pixel side)")
     parser.add_argument("--x-offset", type=float, default=0,
                         help="the x offset of the environment")

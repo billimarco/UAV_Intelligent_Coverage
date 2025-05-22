@@ -31,11 +31,8 @@ class PPONet(nn.Module):
         """
         
         # Gestione del caso in cui non ci sono GUs (gu_input vuoto)
-        if gu_input.size(1) == 0 or not gu_mask.any():  # Se il numero di GUs è 0
-            uav_tokens = self.backbone(uav_input, gu_input, uav_mask)  # (B, U, D)
-        else:
-            uav_tokens = self.backbone(uav_input, gu_input, uav_mask, gu_mask)  # (B, U, D)
-        
+        uav_tokens = self.backbone(uav_input, gu_input, uav_mask, gu_mask)  # (B, U, D)
+            
         mean, std = self.actor_head(uav_tokens, uav_mask)  # (B, U, 2)
 
         # Clamping della std per evitare instabilità numeriche
@@ -80,10 +77,7 @@ class PPONet(nn.Module):
         """
         
         # Gestione del caso in cui non ci sono GUs (gu_input vuoto)
-        if gu_input.size(1) == 0 or not gu_mask.any():  # Se il numero di GUs è 0
-            uav_tokens = self.backbone(uav_input, gu_input, uav_mask)  # (B, U, D)
-        else:
-            uav_tokens = self.backbone(uav_input, gu_input, uav_mask, gu_mask)  # (B, U, D)
+        uav_tokens = self.backbone(uav_input, gu_input, uav_mask, gu_mask)  # (B, U, D)
         return uav_tokens
     
     def get_action(self, uav_tokens, uav_mask=None):

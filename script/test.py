@@ -8,7 +8,7 @@ import numpy as np
 
 if __name__ == "__main__":
     args = args = utils.parse_args()
-    grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset)
+    grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset, args.unexplored_point_max_steps)
     rng = np.random.default_rng(2)
     spawn_area = rng.choice(grid.spawn_area)
     (x_min, x_max), (y_min, y_max) = spawn_area

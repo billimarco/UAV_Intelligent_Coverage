@@ -20,14 +20,7 @@ class PPOTransformer(nn.Module):
         self.transformer_encoder_decoder = nn.Transformer(d_model=embed_dim, batch_first=True, num_encoder_layers=2, num_decoder_layers=2)
 
     def forward(self, UAV_info, GU_positions, uav_mask=None, gu_mask=None):
-        # Embedding
-        source = self.embedding_encoder(GU_positions)  # (B, G, D)
-        target = self.embedding_decoder(UAV_info)      # (B, U, D)
-
-        # Normalizzazione
-        source = self.layernorm_encoder(source)
-        target = self.layernorm_decoder(target)
-        
+   
         # Fix gu_mask se contiene righe tutte False
         if gu_mask is not None:
             all_false_rows = ~gu_mask.any(dim=1)  # (B,)
@@ -46,7 +39,15 @@ class PPOTransformer(nn.Module):
                 # Imposta GU_positions[:, 0, :] a un valore neutro/esplorativo
                 # Esempio: zero vector (B, D)
                 GU_positions[all_false_rows, 0, :] = torch.randn_like(GU_positions[all_false_rows, 0, :])
-                
+        
+        # Embedding
+        source = self.embedding_encoder(GU_positions)  # (B, G, D)
+        target = self.embedding_decoder(UAV_info)      # (B, U, D)
+
+        # Normalizzazione
+        source = self.layernorm_encoder(source)
+        target = self.layernorm_decoder(target)
+        
         # Maschere per evitare calcoli su token fittizi
         src_key_padding_mask = ~gu_mask if gu_mask is not None else None  # (B, G)
         tgt_key_padding_mask = ~uav_mask if uav_mask is not None else None  # (B, U)

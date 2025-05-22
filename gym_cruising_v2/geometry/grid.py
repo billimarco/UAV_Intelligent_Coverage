@@ -2,7 +2,9 @@ from typing import Tuple
 from typing import List
 
 import numpy as np
+import math
 from gym_cruising_v2.geometry.line import Line
+from gym_cruising_v2.geometry.coordinate import Coordinate
 from gym_cruising_v2.geometry.point import Point
 from gym_cruising_v2.geometry.pixel import Pixel
 
@@ -26,8 +28,24 @@ class Grid:
         self.spawn_offset = spawn_offset
         self.unexplored_point_max_steps = unexplored_point_max_steps
 
-        self.pixel_grid = [[Pixel(i, j, resolution, unexplored_point_max_steps) for j in range(window_height)] for i in range(window_width)]
-
+        # Crea la griglia di punti
+        self.point_grid = [[Point(i, j, unexplored_point_max_steps)
+                            for j in range(window_height * resolution)]
+                            for i in range(window_width * resolution)]
+        
+        self.pixel_grid = []
+        for i in range(window_width):
+            row = []
+            for j in range(window_height):
+                # Estrai i punti della sotto-griglia corrispondente
+                points_block = [
+                    [self.point_grid[x][y] for y in range(j * resolution, (j + 1) * resolution)]
+                    for x in range(i * resolution, (i + 1) * resolution)
+                ]
+                # Costruisci il pixel con i suoi punti
+                pixel = Pixel(i, j, points_block, unexplored_point_max_steps)
+                row.append(pixel)
+            self.pixel_grid.append(row)
         # Costruisci i muri (cornice rettangolare)
         '''
         self.walls = (
@@ -46,7 +64,24 @@ class Grid:
         )
     
     def reset(self):
-        self.pixel_grid = [[Pixel(i, j, self.resolution, self.unexplored_point_max_steps) for j in range(self.window_height)] for i in range(self.window_width)]
+        # Crea la griglia di punti
+        self.point_grid = [[Point(i, j, self.unexplored_point_max_steps)
+                            for j in range(self.window_height * self.resolution)]
+                            for i in range(self.window_width * self.resolution)]
+        
+        self.pixel_grid = []
+        for i in range(self.window_width):
+            row = []
+            for j in range(self.window_height):
+                # Estrai i punti della sotto-griglia corrispondente
+                points_block = [
+                    [self.point_grid[x][y] for y in range(j * self.resolution, (j + 1) * self.resolution)]
+                    for x in range(i * self.resolution, (i + 1) * self.resolution)
+                ]
+                # Costruisci il pixel con i suoi punti
+                pixel = Pixel(i, j, points_block, self.unexplored_point_max_steps)
+                row.append(pixel)
+            self.pixel_grid.append(row)
 
     def get_pixel(self, pixel_x: int, pixel_y: int) -> Pixel:
         """Restituisce il Pixel alla posizione (x, y) nella griglia di pixel."""
@@ -61,30 +96,27 @@ class Grid:
         Converte (x, y) assoluti in indici di pixel e posizione relativa nel point_grid.
         """
         if 0 <= point_x < self.window_width * self.resolution and 0 <= point_y < self.window_height * self.resolution:
-            pixel_x = point_x // self.resolution
-            pixel_y = point_y // self.resolution
-            local_x = point_x % self.resolution
-            local_y = point_y % self.resolution
-            return self.pixel_grid[pixel_x][pixel_y].point_grid[local_x][local_y]
+            return self.point_grid[point_x][point_y]
         else:
             raise IndexError(f"Point coordinates out of bounds: ({point_x}, {point_y})")
+        
+    def get_point_from_coordinate(self, position: Coordinate) -> Point:
+        point_x = math.floor(position.x_coordinate)
+        point_y = math.floor(position.y_coordinate)
+        return self.get_point(point_x, point_y)
+
 
     def get_pixel_from_point(self, point:Point) -> Pixel:
-        if 0 <= point.x_coordinate < self.window_width * self.resolution and 0 <= point.y_coordinate < self.window_height * self.resolution:
-            pixel_x = point.x_coordinate // self.resolution
-            pixel_y = point.y_coordinate // self.resolution
+        if 0 <= point.point_x < self.window_width * self.resolution and 0 <= point.point_y < self.window_height * self.resolution:
+            pixel_x = point.point_x // self.resolution
+            pixel_y = point.point_y // self.resolution
             return self.pixel_grid[pixel_x][pixel_y]
         else:
-            raise IndexError(f"Point coordinates out of bounds: ({point.x_coordinate}, {point.y_coordinate})")
+            raise IndexError(f"Point coordinates out of bounds: ({point.point_x}, {point.point_y})")
         
-    def get_pixel_from_point_coordinate(self, point_x:int, point_y:int) -> Pixel:
-        if 0 <= point_x < self.window_width * self.resolution and 0 <= point_y < self.window_height * self.resolution:
-            pixel_x = point_x // self.resolution
-            pixel_y = point_y // self.resolution
-            return self.pixel_grid[pixel_x][pixel_y]
-        else:
-            raise IndexError(f"Point coordinates out of bounds: ({point_x}, {point_y})")
-        
+    def get_pixel_from_coordinate(self, position:Coordinate) -> Pixel:
+        return self.get_pixel_from_point(self.get_point_from_coordinate(position))
+       
     def get_pixel_exploration_map(self) -> np.ndarray:
         exploration_map = np.zeros((self.window_width, self.window_height), dtype=np.float32)
         for i, row in enumerate(self.pixel_grid):
@@ -99,13 +131,10 @@ class Grid:
 
         exploration_map = np.zeros((total_width, total_height), dtype=np.float32)
 
-        for i in range(self.window_width):
-            for j in range(self.window_height):
-                pixel = self.pixel_grid[i][j]
-                for x in range(self.resolution):
-                    for y in range(self.resolution):
-                        point = pixel.point_grid[x][y]
-                        exploration_map[i * self.resolution + x, j * self.resolution + y] = point.step_from_last_visit
+        for x in range(total_width):
+            for y in range(total_height):
+                point = self.point_grid[x][y]
+                exploration_map[x, y] = point.step_from_last_visit
 
         return exploration_map
-                
+                    

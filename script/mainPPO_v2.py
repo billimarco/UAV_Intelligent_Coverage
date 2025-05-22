@@ -102,7 +102,7 @@ def add_padding_state_uav(state, uav_number):
     padding = np.array([[0., 0.]])
     # Applica padding allo stato (UAV*2 → max_UAV*2)
     for i in range(uav_number*2, args.max_uav_number * 2):
-        state = np.insert(state, i, padding, axis=0)
+        state["uav_states"] = np.insert(state["uav_states"], i, padding, axis=0)
             
     return state
 
@@ -123,11 +123,18 @@ def process_state_batch(state_batch):
     gu_masks = []
 
     for array in state_batch:
-        uav_info, gu_positions = np.split(array, [args.max_uav_number * 2], axis=0)
-
         # UAV info: reshape e conversione
-        uav_info = uav_info.reshape(args.max_uav_number, 4)
+        uav_raw = state["uav_states"]  # shape: (n_uav * 2, 2)
+        uav_flat = uav_raw.reshape(-1)  # flatten to 1D: shape = (n_uav * 4,)
+        n_uav = len(uav_flat) // 4
+        uav_info = uav_raw.reshape(n_uav, 4)  # [n_uav, 4]
         uav_info_tensor = torch.from_numpy(uav_info).float().to(device)
+
+        # Padding UAV to max_uav
+        pad_uav = args.max_uav_number - uav_info_tensor.shape[0]
+        if pad_uav > 0:
+            uav_info_tensor = F.pad(uav_info_tensor, (0, 0, 0, pad_uav), value=0.0)
+            
         uav_info_list.append(uav_info_tensor)
         
         # UAV mask: True dove almeno un valore è non zero
@@ -135,11 +142,15 @@ def process_state_batch(state_batch):
         uav_masks.append(uav_mask)
 
         # GU positions: conversione
-        gu_tensor = torch.from_numpy(gu_positions).float().to(device)
+        gu_positions = state["covered_users_states"]
+        if gu_positions.size == 0:
+            gu_tensor = torch.zeros((1, 2), dtype=torch.float32, device=device)  # dummy GU
+            gu_mask = torch.tensor([False], dtype=torch.bool, device=device)
+        else:
+            gu_tensor = torch.from_numpy(gu_positions).float().to(device)
+            gu_mask = (gu_tensor.abs().sum(dim=-1) > 0)
+
         gu_pos_list.append(gu_tensor)
-        
-        # GU mask: True dove almeno un valore è non zero
-        gu_mask = (gu_tensor.abs().sum(dim=-1) > 0)
         gu_masks.append(gu_mask)
 
     # Stack UAV info (dimensione fissa)
@@ -153,10 +164,11 @@ def process_state_batch(state_batch):
 
     for gu, mask in zip(gu_pos_list, gu_masks):
         pad_len = max_gu - gu.shape[0]
-        padded_gu = F.pad(gu, (0, 0, 0, pad_len), value=0.0)
-        padded_mask = F.pad(mask, (0, pad_len), value=False)
-        padded_gu_pos.append(padded_gu)
-        padded_gu_masks.append(padded_mask)
+        if pad_len > 0:
+            gu = F.pad(gu, (0, 0, 0, pad_len), value=0.0)
+            mask = F.pad(mask, (0, pad_len), value=False)
+        padded_gu_pos.append(gu)
+        padded_gu_masks.append(mask)
 
     connected_gu_positions_batch = torch.stack(padded_gu_pos)  # [B, max_gu, 2]
     gu_mask = torch.stack(padded_gu_masks)                     # [B, max_gu]
@@ -373,7 +385,7 @@ if __name__ == "__main__":
                 for step in range(args.num_steps):
                     global_step += 1
                     
-                    state = add_padding_state_uav(state, options["uav"])
+                    #state = add_padding_state_uav(state, options["uav"])
 
                     uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
                     
@@ -390,14 +402,10 @@ if __name__ == "__main__":
                     actions = actions.squeeze(0)     # shape: (UAV, 2)
                     logprobs = logprobs.squeeze(0)    # shape: (UAV,)
                     values = values.squeeze(0)        # shape: (1,)
-
-
-                    # Applica max speed scaling
-                    scaled_actions = actions * args.max_speed_uav   # (UAV, 2)
                     
-                    real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
+                    real_actions = actions[uav_mask.squeeze(0)]  # (U_real, 2)
                     
-                    next_state, reward, terminated, truncated, _ = env.step(real_actions.cpu().numpy())
+                    next_state, reward, terminated, truncated, _ = env.step({"uav_moves": real_actions.cpu().numpy()})
                     
                     reward = torch.tensor(reward).to(device)
                     terminated = torch.tensor(terminated).to(device)
@@ -475,7 +483,7 @@ if __name__ == "__main__":
                     mb_returns_masked = mb_returns[mb_uav_mask]            # Maschera su returns
 
                     _, newlogprob, entropy, newvalue = ppo_net.get_action_and_value(mb_state_tokens, mb_uav_mask)
-                    #TODO: mascherare newlogprob e newvalue, entropy
+                    
                     mb_newlogprob_masked = newlogprob[mb_uav_mask]  # Maschera su logprobs
                     mb_newvalues_masked = newvalue.unsqueeze(-1).expand(-1, args.max_uav_number)[mb_uav_mask]      # Maschera su values
                     mb_entropy_masked = entropy[mb_uav_mask]      # Maschera su entropy

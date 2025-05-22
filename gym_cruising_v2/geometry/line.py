@@ -22,17 +22,17 @@ class Line:
     def __init__(self, start: Point, end: Point) -> None:
         self.start = start
         self.end = end
-        if start.x_coordinate == end.x_coordinate:  # Vertical line
+        if start.point_x == end.point_x:  # Vertical line
             self.slope = 0
             self.y_intercept = math.inf
-        elif start.y_coordinate == end.y_coordinate:  # Horizontal line
+        elif start.point_y == end.point_y:  # Horizontal line
             self.slope = 0
-            self.y_intercept = start.y_coordinate
+            self.y_intercept = start.point_y
         else:
-            self.slope = ((start.y_coordinate - end.y_coordinate)
-                          / (start.x_coordinate - end.x_coordinate))
+            self.slope = ((start.point_y - end.point_y)
+                          / (start.point_x - end.point_x))
             self.y_intercept = (
-                    start.y_coordinate - self.slope * start.x_coordinate)
+                    start.point_y - self.slope * start.point_x)
 
     def get_intersection(self, other: Line) -> Point:
         """Get the intersection point between two lines.
@@ -42,17 +42,17 @@ class Line:
         if self.slope == other.slope:  # Parallel lines
             raise NoIntersectionError
 
-        if self.start.x_coordinate == self.end.x_coordinate:
-            x_coordinate = self.start.x_coordinate
+        if self.start.point_x == self.end.point_x:
+            x_coordinate = self.start.point_x
             y_coordinate = other.slope * x_coordinate + other.y_intercept
-        elif other.start.x_coordinate == other.end.x_coordinate:
-            x_coordinate = other.start.x_coordinate
+        elif other.start.point_x == other.end.point_x:
+            x_coordinate = other.start.point_x
             y_coordinate = self.slope * x_coordinate + self.y_intercept
-        elif self.start.y_coordinate == self.end.y_coordinate:
-            y_coordinate = self.start.y_coordinate
+        elif self.start.point_y == self.end.point_y:
+            y_coordinate = self.start.point_y
             x_coordinate = (y_coordinate - other.y_intercept) / other.slope
-        elif other.start.y_coordinate == other.end.y_coordinate:
-            y_coordinate = other.start.y_coordinate
+        elif other.start.point_y == other.end.point_y:
+            y_coordinate = other.start.point_y
             x_coordinate = (y_coordinate - self.y_intercept) / self.slope
         else:
             x_coordinate = ((self.y_intercept - other.y_intercept)
@@ -69,13 +69,13 @@ class Line:
     def contains(self, point: Point) -> bool:
         """Calculate if the line contains a given point."""
         contains_x = (
-                min(self.start.x_coordinate, self.end.x_coordinate)
-                <= point.x_coordinate
-                <= max(self.start.x_coordinate, self.end.x_coordinate))
+                min(self.start.point_x, self.end.point_x)
+                <= point.point_x
+                <= max(self.start.point_x, self.end.point_x))
         contains_y = (
-                min(self.start.y_coordinate, self.end.y_coordinate)
-                <= point.y_coordinate
-                <= max(self.start.y_coordinate, self.end.y_coordinate))
+                min(self.start.point_y, self.end.point_y)
+                <= point.point_y
+                <= max(self.start.point_y, self.end.point_y))
         return contains_x and contains_y
 
     def __eq__(self, other: Any) -> bool:

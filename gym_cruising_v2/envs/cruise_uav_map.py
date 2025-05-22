@@ -12,6 +12,7 @@ from pygame import Surface
 from gym_cruising_v2.actors.GU import GU
 from gym_cruising_v2.actors.UAV import UAV
 from gym_cruising_v2.envs.cruise import Cruise
+from gym_cruising_v2.geometry.coordinate import Coordinate
 from gym_cruising_v2.geometry.point import Point
 from gym_cruising_v2.geometry.pixel import Pixel
 from gym_cruising_v2.geometry.grid import Grid
@@ -30,6 +31,8 @@ class CruiseUAVWithMap(Cruise):
 
     gu_covered = 0
     max_gu_covered = 0
+    total_uavs_point_coverage = 0
+    simultaneous_uavs_point_coverage = 0
 
     def __init__(self, args, render_mode=None) -> None:
         super().__init__(args, render_mode)
@@ -92,6 +95,8 @@ class CruiseUAVWithMap(Cruise):
         #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
         self.max_gu_covered = 0
+        self.total_uavs_point_coverage = 0
+        self.simultaneous_uavs_point_coverage = 0
         np.random.seed(seed)
         return super().reset(seed=seed, options=options)
     
@@ -129,9 +134,9 @@ class CruiseUAVWithMap(Cruise):
         # x_coordinate = int(self.np_random.uniform(area[0][0] + 800, area[0][1] - 800))
         for i in range(self.uav_number):
             while True:
-                x_coordinate = int(self.np_random.uniform(area[0][0], area[0][1]))
-                y_coordinate = int(self.np_random.uniform(area[1][0], area[1][1]))
-                position = self.grid.get_point(x_coordinate, y_coordinate)
+                x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
+                y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
+                position = Coordinate(x_coordinate, y_coordinate, self.uav_altitude)
 
                 # Primo UAV: non serve il check
                 if i == 0 or not self.check_if_are_too_close(i, position):
@@ -141,9 +146,9 @@ class CruiseUAVWithMap(Cruise):
     def init_gu(self) -> None:
         area = self.np_random.choice(self.grid.spawn_area)
         for _ in range(self.starting_gu_number):
-            x_coordinate = int(self.np_random.uniform(area[0][0], area[0][1]))
-            y_coordinate = int(self.np_random.uniform(area[1][0], area[1][1]))
-            position = self.grid.get_point(x_coordinate, y_coordinate)
+            x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
+            y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
+            position = Coordinate(x_coordinate, y_coordinate, 0)
             gu = GU(position)
             self.initialize_channel(gu)
             self.gu.append(gu)
@@ -154,16 +159,16 @@ class CruiseUAVWithMap(Cruise):
         number_of_clusters = options['clusters_number']
         gu_for_cluster = int(self.starting_gu_number / number_of_clusters)
         for i in range(number_of_clusters):
-            mean_x = int(self.np_random.uniform(area[0][0], area[0][1]))
-            mean_y = int(self.np_random.uniform(area[0][0], area[0][1]))
+            mean_x = self.np_random.uniform(area[0][0], area[0][1])
+            mean_y = self.np_random.uniform(area[0][0], area[0][1])
             for j in range(gu_for_cluster):
                 repeat = True
                 while repeat:
                     # Generazione del numero casuale
-                    x_coordinate = int(np.random.normal(mean_x, std_dev))
-                    y_coordinate = int(np.random.normal(mean_y, std_dev))
+                    x_coordinate = np.random.normal(mean_x, std_dev)
+                    y_coordinate = np.random.normal(mean_y, std_dev)
                     if area[0][0] <= x_coordinate <= area[0][1] and area[1][0] <= y_coordinate <= area[1][1]:
-                        position = self.grid.get_point(x_coordinate, y_coordinate)
+                        position = Coordinate(x_coordinate, y_coordinate, 0)
                         repeat = False
                 gu = GU(position)
                 self.initialize_channel(gu)
@@ -171,7 +176,7 @@ class CruiseUAVWithMap(Cruise):
 
     def initialize_channel(self, gu):
         for uav in self.uav:
-            distance = self.calculate_distance_uav_gu(uav.position, gu.position)
+            distance = gu.position.calculate_distance_to_coordinate(uav.position)
             initial_channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
             sample = random.random()
             #RAND
@@ -238,7 +243,7 @@ class CruiseUAVWithMap(Cruise):
     
     # DO ACTIONS    
     def perform_action(self, actions) -> None:
-        self.move_UAV(actions)
+        self.move_UAV(actions["uav_moves"])
         self.update_GU()
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
@@ -255,11 +260,7 @@ class CruiseUAVWithMap(Cruise):
     def move_UAV(self, normalized_actions):
         actions = self.max_speed_uav * normalized_actions
         for i, uav in enumerate(self.uav):
-            previous_position = uav.position
-            new_position = self.grid.get_point(previous_position.x_coordinate + actions[i][0],
-                                 previous_position.y_coordinate + actions[i][1])
-            uav.position = new_position
-            uav.previous_position = previous_position
+            uav.position = Coordinate(uav.position.x_coordinate + actions[i][0], uav.position.y_coordinate + actions[i][1], self.uav_altitude)
             uav.last_shift_x = actions[i][0]
             uav.last_shift_y = actions[i][1]
 
@@ -268,40 +269,29 @@ class CruiseUAVWithMap(Cruise):
         for gu in self.gu:
             repeat = True
             while repeat:
-                previous_position = gu.position
                 distance = self.np_random.normal(self.gu_mean_speed, self.gu_standard_deviation)
                 if distance < 0.0:
                     distance = 0.0
                 direction = np.random.choice(['up', 'down', 'left', 'right'])
 
                 if direction == 'up':
-                    new_position = self.grid.get_point(previous_position.x_coordinate, previous_position.y_coordinate + distance)
+                    new_position = Coordinate(gu.position.x_coordinate, gu.position.y_coordinate + distance,0)
                 elif direction == 'down':
-                    new_position = self.grid.get_point(previous_position.x_coordinate, previous_position.y_coordinate - distance)
+                    new_position = Coordinate(gu.position.x_coordinate, gu.position.y_coordinate - distance,0)
                 elif direction == 'left':
-                    new_position = self.grid.get_point(previous_position.x_coordinate - distance, previous_position.y_coordinate)
+                    new_position = Coordinate(gu.position.x_coordinate - distance, gu.position.y_coordinate,0)
                 elif direction == 'right':
-                    new_position = self.grid.get_point(previous_position.x_coordinate + distance, previous_position.y_coordinate)
+                    new_position = Coordinate(gu.position.x_coordinate + distance, gu.position.y_coordinate,0)
 
                 # check if GU exit from environment
                 if new_position.is_in_area(area):
                     repeat = False
                     gu.position = new_position
-                    gu.previous_position = previous_position
                 else:
                     repeat = True
 
 
-    # DO CALCULATIONS AND REWARDS
-    def calculate_distance_uav_gu(self, uav: Point, gu: Point):
-        return math.sqrt(math.pow(uav.x_coordinate - gu.x_coordinate, 2) +
-                        math.pow(uav.y_coordinate - gu.y_coordinate, 2) +
-                        self.uav_altitude ** 2)
-        
-    def calculate_distance_uav_point(self, uav: Point, point: Point):
-        return math.sqrt(math.pow(uav.x_coordinate - point.x_coordinate, 2) +
-                        math.pow(uav.y_coordinate - point.y_coordinate, 2) +
-                        self.uav_altitude ** 2)
+    # DO CALCULATIONS AND REWARDS 
         
     def calculate_PathLoss_with_Markov_Chain(self):
         self.pathLoss = []
@@ -313,7 +303,7 @@ class CruiseUAVWithMap(Cruise):
             gu_shift = gu.position.calculate_distance(gu.previous_position)
             '''
             for index, uav in enumerate(self.uav):
-                distance = self.calculate_distance_uav_gu(uav.position, gu.position)
+                distance = gu.position.calculate_distance_to_coordinate(uav.position)
                 #RAND
                 '''
                 channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
@@ -346,38 +336,31 @@ class CruiseUAVWithMap(Cruise):
     def calculate_UAVs_connection_area(self):
         distance_LoS_coverage = self.communication_channel.get_distance_from_SINR_closed_form(self.covered_threshold,0)
         
-        uav_points = []
-        uav_pixels = []
+        uav_positions = []
         for index, uav in enumerate(self.uav):
-            uav_point = self.grid.get_point(uav.position.x_coordinate, uav.position.y_coordinate)
-            uav_points.append(uav_point)
-            uav_pixel = self.grid.get_pixel_from_point(uav_point)
-            uav_pixels.append(uav_pixel)
+            uav_positions.append(uav.position)
         
-        total_uavs_point_coverage = 0
-        simultaneous_uavs_point_coverage = 0
+        self.total_uavs_point_coverage = 0
+        self.simultaneous_uavs_point_coverage = 0
         
         for pixel_row in self.grid.pixel_grid:
             for pixel in pixel_row:
                 for point_row in pixel.point_grid:
                     for point in point_row:
                         point_covered = False
-                        point_covered_more_than_one = False
-                        for uav_point in uav_points:
-                            if(self.calculate_distance_uav_point(uav_point, point) <= distance_LoS_coverage):
-                                total_uavs_point_coverage +=1
+                        for index, uav in enumerate(self.uav):
+                            if(uav.position.calculate_distance_to_point(point) <= distance_LoS_coverage):
+                                self.total_uavs_point_coverage +=1
                                 if not point_covered:
                                     point_covered = True
                                 elif point_covered:
-                                    simultaneous_uavs_point_coverage +=1
+                                    self.simultaneous_uavs_point_coverage +=1
                         if point_covered:       
                             point.set_covered(True)
                             point.reset_step_from_last_visit()
                         else:
                             point.increment_step_from_last_visit()
                 pixel.calculate_mean_step_from_last_visit()
-            
-        return total_uavs_point_coverage, simultaneous_uavs_point_coverage
 
     def calculate_RCR_without_uav_i(self, i):
         tmp_matrix = np.delete(self.connectivity_matrix, i, axis=1)  # Remove i-th column
@@ -388,21 +371,30 @@ class CruiseUAVWithMap(Cruise):
         global_reward = 0
         
         # 1. Entropia sulla distribuzione dei contributi
-        contributions = []
-        for i in range(len(self.uav)):
-            contribution = self.gu_covered - self.calculate_RCR_without_uav_i(i)
-            contributions.append(contribution)
+        num_uav = len(self.uav)
+        contributions = [
+            max(0.0, self.gu_covered - self.calculate_RCR_without_uav_i(i))
+            for i in range(len(self.uav))
+        ]
         sum_contributions = sum(contributions)
-        proportions = [c / sum_contributions for c in contributions] if sum_contributions > 0 else [1.0 / len(contributions)] * len(contributions)
-        entropy = -sum(p * np.log2(p + 1e-8) for p in proportions) # Calcola entropia della distribuzione dei contributi | evita log2(0)
-        max_entropy = np.log2(len(self.uav)) # Entropia massima possibile (copertura perfettamente equa)
-        entropy_contribution_score = entropy / max_entropy if max_entropy > 0 else 0.0  # normalizzata [0,1]
+        if sum_contributions > 0:
+            proportions = [c / sum_contributions for c in contributions]
+        else:
+            proportions = [1.0 / num_uav] * num_uav
+        entropy = -sum(p * np.log2(p + 1e-8) for p in proportions)
+        max_entropy = np.log2(num_uav)
+        entropy_contribution_score = entropy / max_entropy
+        
+        if num_uav <= 1:
+            entropy_contribution_score = 1.0  # oppure 1.0, a seconda della logica che vuoi seguire
+        else:
+            entropy_contribution_score = entropy / max_entropy
+
         global_reward += entropy_contribution_score
         
         # 2. Copertura spaziale (evita UAV sovrapposti)
-        total_uavs_point_coverage, simultaneous_uavs_point_coverage = self.calculate_UAVs_connection_area()
-        if total_uavs_point_coverage > 0:
-            spatial_coverage = (total_uavs_point_coverage - simultaneous_uavs_point_coverage) / total_uavs_point_coverage
+        if self.total_uavs_point_coverage > 0:
+            spatial_coverage = (self.total_uavs_point_coverage - self.simultaneous_uavs_point_coverage) / self.total_uavs_point_coverage
         else:
             spatial_coverage = 0.0
         global_reward += spatial_coverage
@@ -436,6 +428,7 @@ class CruiseUAVWithMap(Cruise):
     
     
     # CHECKS
+    #TODO
     def check_if_disappear_GU(self):
         index_to_remove = []
         for i in range(len(self.gu)):
@@ -451,6 +444,7 @@ class CruiseUAVWithMap(Cruise):
         for index in index_to_remove:
             del self.gu[index]
 
+    #TODO
     def check_if_spawn_new_GU(self):
         sample = random.random()
         for _ in range(4):
@@ -504,7 +498,7 @@ class CruiseUAVWithMap(Cruise):
     def check_if_are_too_close(self, uav_index, position):
         too_close = False
         for j in range(uav_index):
-            if self.uav[j].position.calculate_distance(position) <= self.minimum_starting_distance_between_uav:
+            if self.uav[j].position.calculate_distance_to_coordinates(position) <= self.minimum_starting_distance_between_uav:
                 too_close = True
                 break
         return too_close
@@ -541,18 +535,18 @@ class CruiseUAVWithMap(Cruise):
             canvas.blit(icon_drone, self.image_convert_point(uav.position))
 
     def convert_point(self, point: Point) -> Tuple[int, int]:
-        pygame_x = (round(point.x_coordinate * self.resolution)
+        pygame_x = (round(point.point_x * self.resolution)
                     + self.x_offset)
         pygame_y = (self.window_height
-                    - round(point.y_coordinate * self.resolution)
+                    - round(point.point_y * self.resolution)
                     + self.y_offset)
         return pygame_x, pygame_y
 
     def image_convert_point(self, point: Point) -> Tuple[int, int]:
         shiftX = 15
         shiftY = 15
-        pygame_x = (round(point.x_coordinate * self.resolution) - shiftX + self.x_offset)
-        pygame_y = (self.window_height - round(point.y_coordinate * self.resolution) - shiftY + self.y_offset)
+        pygame_x = (round(point.point_x * self.resolution) - shiftX + self.x_offset)
+        pygame_y = (self.window_height - round(point.point_y * self.resolution) - shiftY + self.y_offset)
         return pygame_x, pygame_y
 
     

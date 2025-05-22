@@ -8,22 +8,22 @@ from gym_cruising_v2.geometry.point import Point
 
 
 class Pixel:
-    """ A point in Cartesian plane. """
+    """ A pixel in Canvas. """
 
-    x_coordinate: float
-    y_coordinate: float
+    pixel_x: int
+    pixel_y: int
     color: Tuple[int, int, int]
     covered: bool
     point_grid: List[List[Point]] # resolution * resolution in m^2
     mean_step_from_last_visit: float
     unexplored_point_max_steps: int
 
-    def __init__(self, x_coordinate: float, y_coordinate: float, resolution: int, unexplored_point_max_steps: int) -> None:
-        self.x_coordinate = x_coordinate
-        self.y_coordinate = y_coordinate
+    def __init__(self, pixel_x: int, pixel_y: int, point_grid : List[List[Point]], unexplored_point_max_steps: int) -> None:
+        self.pixel_x = pixel_x
+        self.pixel_y = pixel_y
         self.color = (255, 255, 255)
         self.covered = False
-        self.point_grid = [[Point(i + x_coordinate*resolution, j+ y_coordinate*resolution, unexplored_point_max_steps) for j in range(resolution)] for i in range(resolution)]
+        self.point_grid = point_grid
         self.mean_step_from_last_visit = 0
         self.unexplored_point_max_steps = unexplored_point_max_steps
 
@@ -50,13 +50,22 @@ class Pixel:
         self.define_color()
     
     def define_color(self):
-        covered_points = self.calculate_coverage
+        covered_points = self.calculate_coverage()
+        total_points = sum(len(row) for row in self.point_grid)
+
         if not self.covered:
-            rgb_value = 255 - math.floor(255 * (self.mean_step_from_last_visit / self.unexplored_point_max_steps))
-            self.color = (rgb_value, rgb_value, rgb_value)
+            # Da giallo (255,255,0) → rosso (255,0,0) in base all'esplorazione
+            ratio = self.mean_step_from_last_visit / self.unexplored_point_max_steps
+            ratio = max(0, min(1, ratio))
+            g_value = math.floor(255 * (1 - ratio))
+            self.color = (255, g_value, 0)
         else:
-            r_value = math.floor(255 * (covered_points/len(self.point_grid)))
-            self.color = (r_value, 0, 0)
+            # Bianco → Giallo in base alla copertura
+            ratio = covered_points / total_points
+            ratio = max(0, min(1, ratio))
+            # Interpolazione tra bianco (255,255,255) e giallo (255,255,0)
+            b_value = math.floor(255 * ratio)
+            self.color = (255, 255, b_value)
             
     def calculate_coverage(self) -> int:
         covered_points = 0
@@ -74,8 +83,8 @@ class Pixel:
 
     def __eq__(self, other: Any) -> bool:
         return (isinstance(other, Point)
-                and math.isclose(self.x_coordinate, other.x_coordinate)
-                and math.isclose(self.y_coordinate, other.y_coordinate))
+                and math.isclose(self.pixel_x, other.point_x)
+                and math.isclose(self.pixel_y, other.point_y))
 
     def __repr__(self) -> str:
-        return f'({self.x_coordinate}, {self.y_coordinate})'
+        return f'({self.pixel_x}, {self.pixel_y})'
