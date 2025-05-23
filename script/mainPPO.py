@@ -337,7 +337,7 @@ if __name__ == "__main__":
             wandb.define_metric("charts/SPS", step_metric="global_step")
 
 
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='rgb_array')
+        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode=args.render_mode)
 
         ppo_net = PPONet(embed_dim=EMBEDDED_DIM).to(device)
         
@@ -554,8 +554,8 @@ if __name__ == "__main__":
         model_path = os.path.join(project_root, "neural_network", "PPO.pth")
         torch.save(ppo_net.state_dict(), model_path)
     
-    if args.visualize:
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='human')
+    if args.use_trained:
+        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode=args.render_mode)
         # Load the trained model
         ppo_net = PPONet(embed_dim=EMBEDDED_DIM).to(device)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
@@ -617,7 +617,7 @@ if __name__ == "__main__":
         print("Last RCR: ", last_RCR)
     
     if args.numerical_test:
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='human')
+        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode=args.render_mode)
         # Load the trained model
         ppo_net = PPONet(embed_dim=EMBEDDED_DIM).to(device)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file

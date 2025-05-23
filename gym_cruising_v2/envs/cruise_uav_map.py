@@ -89,14 +89,14 @@ class CruiseUAVWithMap(Cruise):
         self.gu = []
         self.uav_number = options["uav"]
         self.starting_gu_number = options["gu"]
-        self.grid.reset()
-        self.reset_observation_action_space()
         #RAND
         #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
         self.max_gu_covered = 0
         self.total_uavs_point_coverage = 0
         self.simultaneous_uavs_point_coverage = 0
+        self.grid.reset()
+        self.reset_observation_action_space()
         np.random.seed(seed)
         return super().reset(seed=seed, options=options)
     
@@ -110,10 +110,12 @@ class CruiseUAVWithMap(Cruise):
             self.init_gu()
         else:
             self.init_gu_clustered(options)
+            
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
-        self.calculate_UAVs_connection_area()
+        self.calculate_UAVs_connection_area_vectorized()
         self.check_connection_and_coverage_UAV_GU()
+        self.reset_observation_action_space()
         return self.get_observation()
     
     
@@ -124,10 +126,12 @@ class CruiseUAVWithMap(Cruise):
             self.init_gu()
         else:
             self.init_gu_clustered(options)
+
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
-        self.calculate_UAVs_connection_area()
+        self.calculate_UAVs_connection_area_vectorized()
         self.check_connection_and_coverage_UAV_GU()
+        self.reset_observation_action_space()
  
     def init_uav(self) -> None:
         area = self.np_random.choice(self.grid.spawn_area)
@@ -205,13 +209,7 @@ class CruiseUAVWithMap(Cruise):
         return normalized_actions
     
     def normalizeExplorationMap(self, exploration_map: np.ndarray) -> np.ndarray:  # Normalize in [0,1]
-        # Clippa i valori a max_value (saturazione)
-        clipped_map = np.clip(exploration_map, 0, self.unexplored_point_max_steps)
-        
-        # Normalizza in [0,1]
-        normalized_map = clipped_map / self.unexplored_point_max_steps
-        
-        return normalized_map
+        return np.clip(exploration_map, 0, self.unexplored_point_max_steps) / self.unexplored_point_max_steps
    
     def get_observation(self) -> dict:
         # map_exploration_states (normalizzata, shape = (window_width, window_height))
@@ -245,10 +243,12 @@ class CruiseUAVWithMap(Cruise):
     def perform_action(self, actions) -> None:
         self.move_UAV(actions["uav_moves"])
         self.update_GU()
+        
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
-        self.calculate_UAVs_connection_area()
+        self.calculate_UAVs_connection_area_vectorized()
         self.check_connection_and_coverage_UAV_GU()
+        self.reset_observation_action_space()
 
     def update_GU(self):
         #RAND
@@ -333,12 +333,11 @@ class CruiseUAVWithMap(Cruise):
                 current_GU_SINR.append(self.communication_channel.getSINR(current_pathLoss[j], copy_list))
             self.SINR.append(current_GU_SINR)
     
+    # Deprecated
     def calculate_UAVs_connection_area(self):
         distance_LoS_coverage = self.communication_channel.get_distance_from_SINR_closed_form(self.covered_threshold,0)
         
-        uav_positions = []
-        for index, uav in enumerate(self.uav):
-            uav_positions.append(uav.position)
+        uav_positions = [uav.position for uav in self.uav]
         
         self.total_uavs_point_coverage = 0
         self.simultaneous_uavs_point_coverage = 0
@@ -348,8 +347,8 @@ class CruiseUAVWithMap(Cruise):
                 for point_row in pixel.point_grid:
                     for point in point_row:
                         point_covered = False
-                        for index, uav in enumerate(self.uav):
-                            if(uav.position.calculate_distance_to_point(point) <= distance_LoS_coverage):
+                        for uav_pos in uav_positions:
+                            if(uav_pos.calculate_distance_to_point(point) <= distance_LoS_coverage):
                                 self.total_uavs_point_coverage +=1
                                 if not point_covered:
                                     point_covered = True
@@ -362,6 +361,64 @@ class CruiseUAVWithMap(Cruise):
                             point.increment_step_from_last_visit()
                 pixel.calculate_mean_step_from_last_visit()
 
+    def calculate_UAVs_connection_area_vectorized(self):
+        # Calcola la distanza di copertura in Line-of-Sight (LoS) basata sul SINR e sulla soglia di copertura
+        distance_LoS_coverage = self.communication_channel.get_distance_from_SINR_closed_form(
+            self.covered_threshold, 0
+        )
+
+        # Estrae le posizioni 3D di tutti gli UAV in un array NumPy (UAV, 3)
+        uav_positions = np.array([uav.position.to_array() for uav in self.uav])
+
+        point_refs = []
+        point_coords = []
+
+        # Raccoglie tutti i punti e le loro coordinate 3D direttamente dalla griglia di punti
+        for row in self.grid.point_grid:
+            for point in row:
+                point_refs.append(point)
+                point_coords.append(point.to_array_3d())
+
+        point_coords = np.array(point_coords)  # (Punti, 3)
+
+        # Calcola le distanze euclidee al quadrato tra ogni punto e ogni UAV (matrice P x U)
+        diffs = point_coords[:, None, :] - uav_positions[None, :, :]
+        dists_squared = np.sum(diffs ** 2, axis=2)
+
+        # Crea una maschera booleana che indica se un punto è coperto da almeno un UAV
+        coverage_mask = dists_squared <= distance_LoS_coverage ** 2
+
+        # Conta quanti UAV coprono ciascun punto
+        coverage_counts = np.sum(coverage_mask, axis=1)
+
+        # Inizializza le statistiche di copertura
+        total_coverage = 0
+        simultaneous_coverage = 0
+
+        # Aggiorna lo stato di ogni punto sulla base del numero di UAV che lo coprono
+        for i, point in enumerate(point_refs):
+            count = coverage_counts[i]
+            if count > 0:
+                point.set_covered(True)
+                point.reset_step_from_last_visit()
+                total_coverage += count
+                if count > 1:
+                    simultaneous_coverage += count - 1
+            else:
+                point.increment_step_from_last_visit()
+
+        # Salva le statistiche calcolate
+        self.total_uavs_point_coverage = total_coverage
+        self.simultaneous_uavs_point_coverage = simultaneous_coverage
+
+        # Aggiorna metriche per pixel solo se in modalità "human" (visualizzazione)
+        if self.render_mode == "human":
+            for pixel_row in self.grid.pixel_grid:
+                for pixel in pixel_row:
+                    pixel.calculate_mean_step_from_last_visit()
+
+
+    
     def calculate_RCR_without_uav_i(self, i):
         tmp_matrix = np.delete(self.connectivity_matrix, i, axis=1)  # Remove i-th column
         return np.sum(np.any(tmp_matrix, axis=1))
@@ -390,6 +447,7 @@ class CruiseUAVWithMap(Cruise):
         else:
             entropy_contribution_score = entropy / max_entropy
 
+        entropy_contribution_score = 0 # BLOCCO ENTROPIA
         global_reward += entropy_contribution_score
         
         # 2. Copertura spaziale (evita UAV sovrapposti)
@@ -423,7 +481,7 @@ class CruiseUAVWithMap(Cruise):
                 reward = self.alpha * contribution_score + self.beta * global_reward
                 individual_rewards.append(reward)
 
-        self.log_rewards(individual_rewards, contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score)
+        #self.log_rewards(individual_rewards, contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score)
         return individual_rewards
     
     
@@ -490,7 +548,7 @@ class CruiseUAVWithMap(Cruise):
         collision = False
         for j, other_uav in enumerate(self.uav):
             if j != current_uav_index:
-                if uav.position.calculate_distance(other_uav.position) <= self.collision_distance:
+                if uav.position.calculate_distance_to_coordinate(other_uav.position) <= self.collision_distance:
                     collision = True
                     break
         return collision
@@ -498,7 +556,7 @@ class CruiseUAVWithMap(Cruise):
     def check_if_are_too_close(self, uav_index, position):
         too_close = False
         for j in range(uav_index):
-            if self.uav[j].position.calculate_distance_to_coordinates(position) <= self.minimum_starting_distance_between_uav:
+            if self.uav[j].position.calculate_distance_to_coordinate(position) <= self.minimum_starting_distance_between_uav:
                 too_close = True
                 break
         return too_close
@@ -509,11 +567,11 @@ class CruiseUAVWithMap(Cruise):
         # CANVAS
         canvas.fill((255,255,255))
         
-        for x in range(len(self.grid.pixel_grid)):
-            for y in range(len(self.grid.pixel_grid[0])):
-                pixel = self.grid.pixel_grid[x][y]
+        for row in range(len(self.grid.pixel_grid)):
+            for col in range(len(self.grid.pixel_grid[0])):
+                pixel = self.grid.pixel_grid[row][col]
                 color = pixel.color  # Assumendo sia una tupla (R, G, B)
-                canvas.set_at((x, y), color)
+                canvas.set_at((col, row), color)
 
         # WALL
         '''
@@ -535,18 +593,18 @@ class CruiseUAVWithMap(Cruise):
             canvas.blit(icon_drone, self.image_convert_point(uav.position))
 
     def convert_point(self, point: Point) -> Tuple[int, int]:
-        pygame_x = (round(point.point_x * self.resolution)
+        pygame_x = (round(point.point_col * self.resolution)
                     + self.x_offset)
         pygame_y = (self.window_height
-                    - round(point.point_y * self.resolution)
+                    - round(point.point_row * self.resolution)
                     + self.y_offset)
         return pygame_x, pygame_y
 
     def image_convert_point(self, point: Point) -> Tuple[int, int]:
         shiftX = 15
         shiftY = 15
-        pygame_x = (round(point.point_x * self.resolution) - shiftX + self.x_offset)
-        pygame_y = (self.window_height - round(point.point_y * self.resolution) - shiftY + self.y_offset)
+        pygame_x = (round(point.point_col * self.resolution) - shiftX + self.x_offset)
+        pygame_y = (self.window_height - round(point.point_row * self.resolution) - shiftY + self.y_offset)
         return pygame_x, pygame_y
 
     

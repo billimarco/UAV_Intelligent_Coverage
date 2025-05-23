@@ -47,21 +47,24 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--alg", type=str, default="PPO", nargs="?", const="PPO",
                         help="Algorithm to use: PPO, TD3")
+    parser.add_argument("--render-mode", type=str, default=None, 
+                        help="Render mode (e.g., human or None")
     parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the training will be performed")
-    parser.add_argument("--visualize", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="visualize an enviroment using trained model")
-    parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--use_trained", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+                        help="If set, loads and runs a pre-trained model")
+    parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="numerical test using trained model")
+    
     
     # NN specific arguments
     parser.add_argument("--embedded-dim", type=int, default=32,
                     help="Size of the embedding vector used to represent agent observations or features")
     
     # Reward specific arguments
-    parser.add_argument("--alpha", type=float, default=0.4,
+    parser.add_argument("--alpha", type=float, default=0.3,
                     help="Weight for the individual reward (UAV's coverage contribution)")
-    parser.add_argument("--beta", type=float, default=0.6,
+    parser.add_argument("--beta", type=float, default=0.7,
                         help="Weight for the global reward (fairness, spatial coverage, exploration)")
     
     # UAV specific arguments
@@ -73,7 +76,7 @@ def parse_args():
                         help="maximum speed of a UAV in meters per second")
     parser.add_argument("--uav-altitude", type=float, default=500,
                     help="UAV flight altitude in meters")
-    parser.add_argument("--minimum-starting-distance-between-uav", type=float, default=200.0,
+    parser.add_argument("--minimum-starting-distance-between-uav", type=float, default=50.0,
                     help="minimum initial distance between UAVs in meters")
     parser.add_argument("--collision-distance", type=float, default=10.0,
                         help="minimum distance between UAVs before a collision is considered (in meters)")
@@ -91,13 +94,13 @@ def parse_args():
                         help="SINR threshold (in dB) above which a ground user is considered covered")
     
     # Grid specific arguments
-    parser.add_argument("--window-width", type=int, default=256,
+    parser.add_argument("--window-width", type=int, default=500,
                         help="the width size of the PyGame window")
-    parser.add_argument("--window-height", type=int, default=256,
+    parser.add_argument("--window-height", type=int, default=500,
                         help="the height size of the PyGame window")
     parser.add_argument("--spawn-offset" , type=int, default=15,
                         help="the spawn offset of the environment")
-    parser.add_argument("--resolution", type=int, default=2,
+    parser.add_argument("--resolution", type=int, default=1,
                     help="meters for every pixel side (num of points for pixel side)")
     parser.add_argument("--x-offset", type=float, default=0,
                         help="the x offset of the environment")
@@ -137,9 +140,9 @@ def parse_args():
                         help="the maximum variance of the clusters")
     
     # PPO specific arguments
-    parser.add_argument("--num-envs", type=int, default=8,
+    parser.add_argument("--num-envs", type=int, default=4,
                         help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=384,
+    parser.add_argument("--num-steps", type=int, default=256,
                         help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--updates-per-env", type=int, default=500,
                         help="the number of steps to run in each environment")

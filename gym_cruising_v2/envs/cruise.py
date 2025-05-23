@@ -23,7 +23,7 @@ class Cruise(Env):
     grid: Grid
     world: Tuple[Line, ...]
 
-    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 8}
+    metadata = {"render_modes": ["human"], "render_fps": 8}
 
     def __init__(self, args, render_mode=None) -> None:
         self.args = args
@@ -31,7 +31,7 @@ class Cruise(Env):
         self.window_width = args.window_width  # The width size of the PyGame window
         self.window_height = args.window_height  # The height size of the PyGame window
         self.unexplored_point_max_steps = args.unexplored_point_max_steps
-        self.grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset, args.unexplored_point_max_steps)
+        self.grid = Grid(args.window_width, args.window_height, args.resolution, args.spawn_offset, args.unexplored_point_max_steps, render_mode)
 
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
@@ -51,6 +51,13 @@ class Cruise(Env):
         self.init_environment(options=options)
 
         observation = self.get_observation()
+        
+        print("Returned obs:")
+        for k, v in observation.items():
+            print(f"{k}: shape={v.shape}, dtype={v.dtype}")
+            print("Expected:", self.observation_space[k])
+        
+        assert self.observation_space.contains(observation)
         terminated = self.check_if_terminated()
         info = self.create_info(terminated)
 
@@ -66,6 +73,13 @@ class Cruise(Env):
         self.perform_action(actions)
 
         state = self.get_observation()
+        '''
+        print("Returned state:")
+        for k, v in state.items():
+            print(f"{k}: shape={v.shape}, dtype={v.dtype}")
+            print("Expected:", self.observation_space[k])
+        '''
+        assert self.observation_space.contains(state)
         terminated = self.check_if_terminated()
         truncated = self.check_if_truncated()
         info = self.create_info(terminated)

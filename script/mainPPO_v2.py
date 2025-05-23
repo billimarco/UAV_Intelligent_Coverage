@@ -5,6 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import subprocess
 import argparse
+import multiprocessing as mp
 from distutils.util import strtobool
 
 import time
@@ -23,6 +24,67 @@ import gym_cruising_v2.utils.runtime_utils as utils
 
 BEST_VALIDATION = 0.0
 MAX_LAST_RCR = 0.0
+
+def rollout_worker(i, num_steps, ppo_net, device):
+    # Questa funzione sarà eseguita in parallelo per ogni env i
+    
+    options = get_set_up()
+    env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)  # crea il tuo ambiente, istanza separata
+    
+    state, info = env.reset(seed=int(time.perf_counter()), options=options)
+    
+    # Buffer locali per il rollout di questo env
+    states_list = []
+    actions_list = []
+    log_probs_list = []
+    rewards_list = []
+    dones_list = []
+    values_list = []
+    
+    for step in range(num_steps):
+        uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
+        
+        with torch.no_grad():
+            actions, logprobs, entropy, values = ppo_net(
+                uav_info, connected_gu_positions, uav_mask, gu_mask
+            )
+        
+        actions = actions.squeeze(0)
+        logprobs = logprobs.squeeze(0)
+        values = values.squeeze(0)
+        
+        real_actions = actions[uav_mask.squeeze(0)]
+        
+        next_state, reward, terminated, truncated, _ = env.step({"uav_moves": real_actions.cpu().numpy()})
+        
+        reward = torch.tensor(reward).to(device)
+        terminated = torch.tensor(terminated).to(device)
+        
+        rewards = add_reward_padding(reward)
+        
+        states_list.append(state)
+        actions_list.append(actions.cpu().numpy())
+        log_probs_list.append(logprobs.cpu().numpy())
+        rewards_list.append(rewards.cpu().numpy())
+        dones_list.append(terminated.cpu().numpy())
+        values_list.append(values.cpu().numpy())
+        
+        state = next_state
+        
+        if terminated.any():
+            break
+    
+    env.close()
+    
+    # Ritorna tutti i dati raccolti per questo env
+    return {
+        'states': states_list,
+        'actions': actions_list,
+        'log_probs': log_probs_list,
+        'rewards': rewards_list,
+        'dones': dones_list,
+        'values': values_list,
+    }
 
 def compute_gae(rewards, values, dones):
     """
@@ -196,7 +258,7 @@ def get_clustered_options():
     })
 
 def get_set_up():
-    
+    '''
     if args.uav_number == args.max_uav_number:
         args.uav_number = 1
     else:
@@ -207,7 +269,14 @@ def get_set_up():
         options = get_clustered_options()
     else:
         options = get_uniform_options()
-
+    ''' 
+    options = {
+        "uav": 3,
+        "gu": 90,
+        "clustered": False,
+        "clusters_number": 0,
+        "variance": 0
+    }
     return options
 
 def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0, args=None):
@@ -218,7 +287,7 @@ def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0,
     for ep in range(num_episodes):
         options = {
             "uav": 3,
-            "gu": 120,
+            "gu": 90,
             "clustered": False,
             "clusters_number": 0,
             "variance": 0
@@ -231,7 +300,6 @@ def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0,
         sum_last_rcr = 0
 
         while not done:
-            state = add_padding_state_uav(state, options["uav"])
             uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
             
             # Inference
@@ -245,11 +313,10 @@ def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0,
 
             # Rimuovi batch dim
             actions = actions.squeeze(0)     # shape: (UAV, 2)
-            # Applica max speed scaling
-            scaled_actions = actions * args.max_speed_uav   # (UAV, 2)
-            real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
+            
+            real_actions = actions[uav_mask.squeeze(0)]  # (U_real, 2)
             # Passaggio ambiente
-            next_state, reward, terminated, truncated, info = env.step(real_actions.cpu().numpy())
+            next_state, reward, terminated, truncated, info = env.step({"uav_moves": real_actions.cpu().numpy()})
             if steps == 384:
                 truncated = True
             done = terminated or truncated
@@ -344,8 +411,8 @@ if __name__ == "__main__":
             wandb.define_metric("charts/SPS", step_metric="global_step")
 
 
-        env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode='rgb_array')
-
+        env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
+        
         ppo_net = PPONet(embed_dim=args.embedded_dim).to(device)
         
         optimizer = optim.Adam(ppo_net.parameters(), lr=args.learning_rate, weight_decay=1e-5)
@@ -379,6 +446,7 @@ if __name__ == "__main__":
             values_tensor = torch.zeros((args.num_envs, args.num_steps, 1), dtype=torch.float32).to(device)
 
             # Rollout
+            rollout_start_time = time.time()
             for i in range(args.num_envs):
                 options = get_set_up()
                 state, info = env.reset(seed=int(time.perf_counter()), options=options)
@@ -421,7 +489,21 @@ if __name__ == "__main__":
                     values_tensor[i, step, :] = values
 
                     state = next_state
-                    
+                    print(global_step)
+        
+            #TODO    
+            with mp.Pool(processes=args.num_envs) as pool:
+                # Lancia tutti i rollout paralleli
+                results = pool.starmap(
+                    rollout_worker,
+                    [(i, args.num_steps, ppo_net, device) for i in range(args.num_envs)]
+                )
+            
+            # results è una lista di dict con rollout per ogni env
+            for i, rollout in enumerate(results):
+                print(f"Env {i} ha fatto {len(rollout['states'])} passi")
+                # Qui puoi concatenare o elaborare i dati come vuoi
+                
             # Calcolare gli advantages e i returns usando GAE
             advantages_tensor, returns_tensor = compute_gae(
                 rewards=rewards_tensor,
@@ -429,9 +511,12 @@ if __name__ == "__main__":
                 dones=dones_tensor
             )
             
+            rollout_end_time = time.time()
+            print(f"Rollout time: {rollout_end_time - rollout_start_time:.2f} seconds")
             
             # Supponiamo che le variabili siano già definite con shape (num_envs, num_steps, ...)
 
+            ppo_start_time = time.time()
             # Flatten (num_envs, num_steps, ...) → (B, ...)
             flat_actions = actions_tensor.reshape(args.batch_size, args.max_uav_number, 2)
             flat_log_probs = log_probs_tensor.reshape(args.batch_size, args.max_uav_number)
@@ -548,6 +633,9 @@ if __name__ == "__main__":
                 "charts/SPS": int(global_step / (time.time() - start_time)),
             }, step=global_step)
 
+            ppo_end_time = time.time()
+            print(f"PPO update time: {ppo_end_time - ppo_start_time:.2f} seconds")
+            
         test(agent=ppo_net, env=env, num_episodes=12, device=device, global_step=global_step, args=args)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -555,8 +643,8 @@ if __name__ == "__main__":
         model_path = os.path.join(project_root, "neural_network", "PPO.pth")
         torch.save(ppo_net.state_dict(), model_path)
     
-    if args.visualize:
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='human')
+    if args.use_trained:
+        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode=args.render_mode)
         # Load the trained model
         ppo_net = PPONet(embed_dim=args.embedded_dim).to(device)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
@@ -618,7 +706,7 @@ if __name__ == "__main__":
         print("Last RCR: ", last_RCR)
     
     if args.numerical_test:
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode='human')
+        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode=args.render_mode)
         # Load the trained model
         ppo_net = PPONet(embed_dim=args.embedded_dim).to(device)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
