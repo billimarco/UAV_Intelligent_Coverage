@@ -5,7 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import subprocess
 import argparse
-import multiprocessing as mp
+import torch.multiprocessing as mp
 from distutils.util import strtobool
 
 import time
@@ -18,6 +18,7 @@ import random
 import torch.nn.functional as F
 import wandb
 
+from gymnasium.vector import SyncVectorEnv, AsyncVectorEnv
 from gym_cruising_v2.neural_network.PPO_net import PPONet
 import gym_cruising_v2.utils.runtime_utils as utils
 
@@ -25,66 +26,22 @@ import gym_cruising_v2.utils.runtime_utils as utils
 BEST_VALIDATION = 0.0
 MAX_LAST_RCR = 0.0
 
-def rollout_worker(i, num_steps, ppo_net, device):
-    # Questa funzione sarà eseguita in parallelo per ogni env i
-    
-    options = get_set_up()
-    env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)  # crea il tuo ambiente, istanza separata
-    
-    state, info = env.reset(seed=int(time.perf_counter()), options=options)
-    
-    # Buffer locali per il rollout di questo env
-    states_list = []
-    actions_list = []
-    log_probs_list = []
-    rewards_list = []
-    dones_list = []
-    values_list = []
-    
-    for step in range(num_steps):
-        uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
-        
-        with torch.no_grad():
-            actions, logprobs, entropy, values = ppo_net(
-                uav_info, connected_gu_positions, uav_mask, gu_mask
-            )
-        
-        actions = actions.squeeze(0)
-        logprobs = logprobs.squeeze(0)
-        values = values.squeeze(0)
-        
-        real_actions = actions[uav_mask.squeeze(0)]
-        
-        next_state, reward, terminated, truncated, _ = env.step({"uav_moves": real_actions.cpu().numpy()})
-        
-        reward = torch.tensor(reward).to(device)
-        terminated = torch.tensor(terminated).to(device)
-        
-        rewards = add_reward_padding(reward)
-        
-        states_list.append(state)
-        actions_list.append(actions.cpu().numpy())
-        log_probs_list.append(logprobs.cpu().numpy())
-        rewards_list.append(rewards.cpu().numpy())
-        dones_list.append(terminated.cpu().numpy())
-        values_list.append(values.cpu().numpy())
-        
-        state = next_state
-        
-        if terminated.any():
-            break
-    
-    env.close()
-    
-    # Ritorna tutti i dati raccolti per questo env
-    return {
-        'states': states_list,
-        'actions': actions_list,
-        'log_probs': log_probs_list,
-        'rewards': rewards_list,
-        'dones': dones_list,
-        'values': values_list,
-    }
+class MySyncVectorEnv(SyncVectorEnv):
+    def __init__(self, env_fns, seed=None, options=None):
+        super().__init__(env_fns)
+        self._reset_seed = seed
+        self._reset_options = options
+
+    def _handle_terminated_envs(self, terminated_indices):
+        for i in terminated_indices:
+            # reset con seed e options
+            self.envs[i].reset(seed=self._reset_seed, options=self._reset_options)
+            
+def make_env_factory(args):
+    def _init():
+        env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
+        return env
+    return _init
 
 def compute_gae(rewards, values, dones):
     """
@@ -129,6 +86,7 @@ def compute_gae(rewards, values, dones):
 
     return advantages, returns
 
+# Deprecated
 def add_reward_padding(rewards):
     pad_count = args.max_uav_number - args.uav_number
     if pad_count > 0:
@@ -141,6 +99,7 @@ def add_reward_padding(rewards):
 
     return rewards
 
+# Deprecated
 def add_padding(actions, reward, logprobs, values):
     pad_count = args.max_uav_number - args.uav_number
     if pad_count > 0:
@@ -159,6 +118,7 @@ def add_padding(actions, reward, logprobs, values):
 
     return actions, reward, logprobs, values
 
+# Deprecated
 def add_padding_state_uav(state, uav_number):
     # Padding per lo stato (in NumPy)
     padding = np.array([[0., 0.]])
@@ -168,7 +128,8 @@ def add_padding_state_uav(state, uav_number):
             
     return state
 
-def process_state_batch(state_batch):
+# Deprecated
+def process_state_batch_old(state_batch):
     """
     Estrae le info UAV e GU da un batch di stati e produce anche le maschere booleane.
 
@@ -237,6 +198,31 @@ def process_state_batch(state_batch):
 
     return uav_info_batch, connected_gu_positions_batch, uav_mask, gu_mask
 
+def process_state_batch(state_batch):
+    """
+    Processa un batch di stati (lista di dict), convertendo i campi in tensori e
+    impilando lungo la dimensione batch senza padding.
+
+    Args:
+        state_batch: list di dict
+        device: torch.device
+
+    Returns:
+        map_exploration_batch: [B, grid_height, grid_width]
+        uav_info_batch: [B, max_uav, 4]
+        connected_gu_positions_batch: [B, max_gu, 2]
+        uav_mask_batch: [B, max_uav] (bool)
+        gu_mask_batch: [B, max_gu] (bool)
+    """
+
+    map_exploration_batch = torch.from_numpy(state_batch["map_exploration_states"]).float().to(device)
+    uav_info_batch = torch.from_numpy(state_batch["uav_states"]).float().to(device)
+    connected_gu_positions_batch = torch.from_numpy(state_batch["covered_users_states"]).float().to(device)
+    uav_mask_batch = torch.from_numpy(state_batch["uav_mask"]).bool().to(device)
+    gu_mask_batch = torch.from_numpy(state_batch["gu_mask"]).bool().to(device)
+
+    return map_exploration_batch, uav_info_batch, connected_gu_positions_batch, uav_mask_batch, gu_mask_batch
+
 def get_uniform_options():
     return ({
         "uav": args.uav_number,
@@ -271,7 +257,7 @@ def get_set_up():
         options = get_uniform_options()
     ''' 
     options = {
-        "uav": 3,
+        "uav": 1,
         "gu": 90,
         "clustered": False,
         "clusters_number": 0,
@@ -370,6 +356,8 @@ def test(agent, env, num_episodes=10, device=torch.device("cpu"), global_step=0,
     
 if __name__ == "__main__":
     args = utils.parse_args()
+    # Ottieni il percorso assoluto della root del progetto, basato su questo file
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
     print(f"Available GPUs: {torch.cuda.device_count()}")
     best_gpu, free_mem = utils.get_most_free_gpu()
@@ -438,15 +426,20 @@ if __name__ == "__main__":
                 optimizer.param_groups[0]["lr"] = lrnow
 
             # Buffer temporanei per un singolo episodio/rollout
-            states_list = []
+            map_exploration_tensor = torch.zeros((args.num_envs, args.num_steps, args.window_height*args.resolution, args.window_width*args.resolution), dtype=torch.float32).to(device)
+            uav_states_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number, 4), dtype=torch.float32).to(device)
+            uav_mask_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.bool).to(device)
+            covered_users_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_gu_number, 2), dtype=torch.float32).to(device)
+            gu_mask_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_gu_number), dtype=torch.bool).to(device)
             actions_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number, 2), dtype=torch.float32).to(device)
             log_probs_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.float32).to(device)
-            rewards_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.float32).to(device)
+            rewards_tensor = torch.zeros((args.num_envs, args.num_steps, 1), dtype=torch.float32).to(device)
             dones_tensor = torch.zeros((args.num_envs, args.num_steps, 1), dtype=torch.bool).to(device)
             values_tensor = torch.zeros((args.num_envs, args.num_steps, 1), dtype=torch.float32).to(device)
-
+            
             # Rollout
             rollout_start_time = time.time()
+            '''
             for i in range(args.num_envs):
                 options = get_set_up()
                 state, info = env.reset(seed=int(time.perf_counter()), options=options)
@@ -455,7 +448,7 @@ if __name__ == "__main__":
                     
                     #state = add_padding_state_uav(state, options["uav"])
 
-                    uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
+                    map_exploration, uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
                     
                     # Ottieni azioni da PPO
                     with torch.no_grad():
@@ -467,43 +460,88 @@ if __name__ == "__main__":
                         )
 
                     # Rimuovi batch dim
+                    map_exploration = map_exploration.squeeze(0)
+                    uav_info = uav_info.squeeze(0)
+                    connected_gu_positions = connected_gu_positions.squeeze(0)
+                    uav_mask = uav_mask.squeeze(0)
+                    gu_mask = gu_mask.squeeze(0)
                     actions = actions.squeeze(0)     # shape: (UAV, 2)
                     logprobs = logprobs.squeeze(0)    # shape: (UAV,)
                     values = values.squeeze(0)        # shape: (1,)
                     
-                    real_actions = actions[uav_mask.squeeze(0)]  # (U_real, 2)
-                    
-                    next_state, reward, terminated, truncated, _ = env.step({"uav_moves": real_actions.cpu().numpy()})
+                    next_state, reward, terminated, truncated, _ = env.step({"uav_moves": actions.cpu().numpy(), "uav_mask": uav_mask.cpu().numpy()})
                     
                     reward = torch.tensor(reward).to(device)
                     terminated = torch.tensor(terminated).to(device)
-                    # Store the transition in memory
-                    rewards = add_reward_padding(reward)
-                    
+                
                     # Memorizza i dati nel buffer temporaneo
-                    states_list.append(state)
+                    map_exploration_tensor[i, step, :, :] = map_exploration
+                    uav_states_tensor[i, step, :, :] = uav_info
+                    uav_mask_tensor[i, step, :] = uav_mask
+                    covered_users_tensor[i, step, :, :] = connected_gu_positions
+                    gu_mask_tensor[i, step, :] = gu_mask
                     actions_tensor[i, step, :, :] = actions
                     log_probs_tensor[i, step, :] = logprobs
-                    rewards_tensor[i, step, :] = rewards
+                    rewards_tensor[i, step, :] = reward
                     dones_tensor[i, step, :] = terminated
                     values_tensor[i, step, :] = values
 
                     state = next_state
                     print(global_step)
-        
-            #TODO    
-            with mp.Pool(processes=args.num_envs) as pool:
-                # Lancia tutti i rollout paralleli
-                results = pool.starmap(
-                    rollout_worker,
-                    [(i, args.num_steps, ppo_net, device) for i in range(args.num_envs)]
-                )
-            
-            # results è una lista di dict con rollout per ogni env
-            for i, rollout in enumerate(results):
-                print(f"Env {i} ha fatto {len(rollout['states'])} passi")
-                # Qui puoi concatenare o elaborare i dati come vuoi
-                
+            '''
+            options = get_set_up()
+            seed = int(time.perf_counter())
+            env_fns = [make_env_factory(args) for _ in range(args.num_envs)]
+            envs = MySyncVectorEnv(env_fns, seed, options)
+            states, infos = envs.reset(seed=seed, options=options)
+
+            # Rollout
+            for step in range(args.num_steps):
+                global_step += args.num_envs
+
+                # Processa batch di osservazioni da tutti gli env
+                map_exploration, uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch(states)
+
+                # Ottieni azioni da PPO
+                with torch.no_grad():
+                    actions, logprobs, entropy, values = ppo_net(
+                        uav_info,                  # [B, UAV, 4]
+                        connected_gu_positions,    # [B, GU, 2]
+                        uav_mask,                  # [B, UAV]
+                        gu_mask                    # [B, GU]
+                    )
+
+                # Step negli env paralleli
+                actions_np = actions.cpu().numpy()
+                uav_mask_np = uav_mask.cpu().numpy()
+                env_action = {
+                    "uav_moves": actions_np,     # (num_envs, max_uav, 2)
+                    "uav_mask": uav_mask_np      # (num_envs, max_uav)
+                }
+
+                next_states, rewards, terminateds, truncateds, infos = envs.step(env_action)
+
+                # Conversione reward e done
+                rewards = torch.tensor(rewards, dtype=torch.float32, device=device)  # [num_envs, max_uav]
+                dones = torch.tensor(terminateds, dtype=torch.bool, device=device)   # [num_envs, max_uav]
+
+                # Salvataggio dei dati nel buffer
+                map_exploration_tensor[:, step, :, :] = map_exploration
+                uav_states_tensor[:, step, :, :] = uav_info
+                uav_mask_tensor[:, step, :] = uav_mask
+                covered_users_tensor[:, step, :, :] = connected_gu_positions
+                gu_mask_tensor[:, step, :] = gu_mask
+                actions_tensor[:, step, :, :] = actions
+                log_probs_tensor[:, step, :] = logprobs
+                rewards_tensor[:, step, 0] = rewards
+                dones_tensor[:, step, 0] = dones
+                values_tensor[:, step, 0] = values
+
+                # Aggiorna lo stato corrente
+                states = next_states
+
+                print(global_step)
+
             # Calcolare gli advantages e i returns usando GAE
             advantages_tensor, returns_tensor = compute_gae(
                 rewards=rewards_tensor,
@@ -538,7 +576,7 @@ if __name__ == "__main__":
                     mb_actions = flat_actions[mb_inds]                                  # [MB, UAV, 2]
                     mb_logprobs = flat_log_probs[mb_inds]                               # [MB, UAV]
                     mb_rewards = flat_rewards[mb_inds]                                  # [MB, UAV]
-                    mb_dones = flat_dones[mb_inds].expand(-1, args.max_uav_number)      # [MB, 1*UAV]
+                    mb_dones = flat_dones[mb_inds]                                      # [MB, UAV]
                     mb_values = flat_values[mb_inds].expand(-1, args.max_uav_number)    # [MB, 1*UAV]
                     mb_advantages = flat_advantages[mb_inds]                            # [MB, UAV]
                     mb_returns = flat_returns[mb_inds]                                  # [MB, UAV]
@@ -637,8 +675,7 @@ if __name__ == "__main__":
             print(f"PPO update time: {ppo_end_time - ppo_start_time:.2f} seconds")
             
         test(agent=ppo_net, env=env, num_episodes=12, device=device, global_step=global_step, args=args)
-        # Ottieni il percorso assoluto della root del progetto, basato su questo file
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        
         # Path al file dei pesi
         model_path = os.path.join(project_root, "neural_network", "PPO.pth")
         torch.save(ppo_net.state_dict(), model_path)

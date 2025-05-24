@@ -37,7 +37,9 @@ class CruiseUAVWithMap(Cruise):
     def __init__(self, args, render_mode=None) -> None:
         super().__init__(args, render_mode)
         
+        self.max_uav_number = args.max_uav_number
         self.uav_number = args.uav_number
+        self.max_gu_number = args.max_gu_number
         self.starting_gu_number = args.starting_gu_number
         self.minimum_starting_distance_between_uav = args.minimum_starting_distance_between_uav # meters
         self.collision_distance = args.collision_distance # meters
@@ -74,14 +76,45 @@ class CruiseUAVWithMap(Cruise):
         self.low_observation = np.tile(low, (obs_shape[0], 1))
         self.high_observation = np.tile(high, (obs_shape[0], 1))
         '''
-        self.observation_space = self.observation_space = spaces.Dict({
-            "map_exploration_states": spaces.Box(low=0, high=+1, shape=(self.window_width*self.resolution, self.window_height*self.resolution), dtype=np.float32),
-            "uav_states": spaces.Box(low=-1, high=+1, shape=(self.uav_number * 2, 2), dtype=np.float64),
-            "covered_users_states": spaces.Box(low=-1, high=+1, shape=(self.gu_covered, 2), dtype=np.float64)
+        self.observation_space = spaces.Dict({
+            "map_exploration_states": spaces.Box(
+                low=0, high=1,
+                shape=(self.grid.grid_height, self.grid.grid_width),
+                dtype=np.float32
+            ),
+            "uav_states": spaces.Box(
+                low=-1, high=1,
+                shape=(self.max_uav_number, 4),
+                dtype=np.float64
+            ),
+            "uav_mask": spaces.Box(
+                low=0, high=1,
+                shape=(self.max_uav_number,),
+                dtype=bool
+            ),
+            "covered_users_states": spaces.Box(
+                low=-1, high=1,
+                shape=(self.max_gu_number, 2),
+                dtype=np.float64
+            ),
+            "gu_mask": spaces.Box(
+                low=0, high=1,
+                shape=(self.max_gu_number,),
+                dtype=bool
+            )
         })
 
         self.action_space = spaces.Dict({
-            "uav_moves": spaces.Box(low=-1, high=+1, shape=(self.uav_number, 2), dtype=np.float64)
+            "uav_moves": spaces.Box(
+                low=-1, high=1,
+                shape=(self.max_uav_number, 2),
+                dtype=np.float64
+            ),
+            "uav_mask": spaces.Box(
+                low=0, high=1,
+                shape=(self.max_uav_number,),
+                dtype=bool
+            )
         })
 
     def reset(self, seed=None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
@@ -212,36 +245,58 @@ class CruiseUAVWithMap(Cruise):
         return np.clip(exploration_map, 0, self.unexplored_point_max_steps) / self.unexplored_point_max_steps
    
     def get_observation(self) -> dict:
-        # map_exploration_states (normalizzata, shape = (window_width, window_height))
+        # Ottieni e normalizza la mappa di esplorazione (shape = (window_width, window_height))
         map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
 
-        # uav_states: concatena posizioni e azioni normalizzate
-        uav_states = np.zeros((self.uav_number * 2, 2), dtype=np.float64)
-        for i in range(self.uav_number):
-            uav_states[2*i] = self.normalizePositions(self.uav[i].position)
-            last_shift = np.array([self.uav[i].last_shift_x, self.uav[i].last_shift_y])
-            uav_states[2*i + 1] = self.normalizeActions(last_shift)
+        # Inizializza lo stato degli UAV e la maschera di validità (padding)
+        uav_states = np.zeros((self.max_uav_number, 4), dtype=np.float64)
+        uav_mask = np.zeros(self.max_uav_number, dtype=bool)
 
-        # covered_users_states: posizioni normalizzate solo degli utenti coperti
+        # Popola uav_states con posizione e azione normalizzate per ogni UAV attivo
+        for i in range(len(self.uav)):
+            pos = self.normalizePositions(self.uav[i].position)  # posizione normalizzata [x, y]
+            act = self.normalizeActions(np.array([self.uav[i].last_shift_x, self.uav[i].last_shift_y]))  # azione normalizzata [dx, dy]
+            uav_states[i] = np.concatenate([pos, act])  # concatena posizione e azione in vettore di dimensione 4
+            uav_mask[i] = True  # marca UAV come attivo
+
+        # Le posizioni da uav_number a max_uav_number rimangono a zero e sono indicate come inattive nella maschera (padding)
+
+        # Inizializza lo stato degli utenti coperti e la relativa maschera (padding)
+        covered_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
+        gu_mask = np.zeros(self.max_gu_number, dtype=bool)
+
+        # Raccogli le posizioni normalizzate solo degli utenti coperti
         covered_users_positions = []
         for gu in self.gu:
             if gu.covered:
                 covered_users_positions.append(self.normalizePositions(gu.position))
-        # Assicurati che covered_users_positions abbia lunghezza gu_covered, se no gestisci pad/truncate
-        covered_users_states = np.array(covered_users_positions, dtype=np.float64)
 
+        num_covered = len(covered_users_positions)
+
+        # Copia le posizioni normalizzate nella matrice di output fino al massimo consentito
+        num_to_copy = min(num_covered, self.max_gu_number)
+        for i in range(num_to_copy):
+            covered_users_states[i] = covered_users_positions[i]
+            gu_mask[i] = True  # marca l’utente come coperto/attivo
+
+        # Le righe da num_to_copy a max_gu_number rimangono zero e sono marcate come inattive nella maschera (padding)
+
+        # Crea il dizionario di osservazione da restituire
         observation = {
             "map_exploration_states": map_exploration,
             "uav_states": uav_states,
-            "covered_users_states": covered_users_states
+            "uav_mask": uav_mask,
+            "covered_users_states": covered_users_states,
+            "gu_mask": gu_mask
         }
 
         return observation
+
     
     
     # DO ACTIONS    
     def perform_action(self, actions) -> None:
-        self.move_UAV(actions["uav_moves"])
+        self.move_UAV(actions)
         self.update_GU()
         
         self.calculate_PathLoss_with_Markov_Chain()
@@ -257,8 +312,9 @@ class CruiseUAVWithMap(Cruise):
         #RAND
         #self.check_if_disappear_GU()
 
-    def move_UAV(self, normalized_actions):
-        actions = self.max_speed_uav * normalized_actions
+    def move_UAV(self, actions):
+        real_actions = actions["uav_moves"][actions["uav_mask"]]  
+        actions = self.max_speed_uav * real_actions
         for i, uav in enumerate(self.uav):
             uav.position = Coordinate(uav.position.x_coordinate + actions[i][0], uav.position.y_coordinate + actions[i][1], self.uav_altitude)
             uav.last_shift_x = actions[i][0]
@@ -470,19 +526,20 @@ class CruiseUAVWithMap(Cruise):
         coverage_score = self.gu_covered / self.max_gu_covered if self.max_gu_covered > 0 else 0.0
         global_reward += coverage_score
 
-            
+        '''  
         # REWARD INDIVIDUALE
         individual_rewards = []
-        for i in range(len(self.uav)):
+        for i in range(self.max_uav_number):
             if terminated[i]:
                 individual_rewards.append(-2.0)
             else:
                 contribution_score = contributions[i] / self.gu_covered if self.gu_covered > 0 else 0.0
                 reward = self.alpha * contribution_score + self.beta * global_reward
                 individual_rewards.append(reward)
+        ''' 
 
-        #self.log_rewards(individual_rewards, contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score)
-        return individual_rewards
+        self.log_rewards(contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score)
+        return global_reward
     
     
     # CHECKS
@@ -542,6 +599,10 @@ class CruiseUAVWithMap(Cruise):
                 terminated_matrix.append(True)
             else:
                 terminated_matrix.append(False)
+        
+        # Aggiungi True per gli UAV inattivi (padding)
+        padding = self.max_uav_number - len(self.uav)
+        terminated_matrix.extend([True] * padding)
         return terminated_matrix
 
     def check_collision(self, current_uav_index, uav) -> bool:
@@ -560,7 +621,6 @@ class CruiseUAVWithMap(Cruise):
                 too_close = True
                 break
         return too_close
-    
     
     # PYGAME METHODS
     def draw(self, canvas: Surface) -> None:
@@ -622,8 +682,20 @@ class CruiseUAVWithMap(Cruise):
         return {"GU coperti": str(self.gu_covered), "Ground Users": str(
             len(self.gu)), "RCR": RCR, "Collision": collision}
 
-    def log_rewards(self, rewards, contributions, entropy_score, spatial_coverage, exploration_incentive, coverage_score):
-        print(f"{'UAV':<5} {'Reward':<10} {'Contr.':<10}")
-        for i, (r, c) in enumerate(zip(rewards, contributions)):
-            print(f"{i:<5} {r:<10.3f} {c:<10.3f}")
-        print(f"\n[GLOBAL] Entropia: {entropy_score:.3f} | Copertura spaziale: {spatial_coverage:.3f} | Esplorazione: {exploration_incentive:.3f} | Copertura GU: {coverage_score:.3f}\n")
+    def log_rewards(self, contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score):
+        print("=== REWARD LOG ===")
+        
+        # Global reward components
+        print(f"Entropy contribution score   : {entropy_contribution_score:.4f}")
+        print(f"Spatial coverage             : {spatial_coverage:.4f}")
+        print(f"Exploration incentive        : {exploration_incentive:.4f}")
+        print(f"Coverage score               : {coverage_score:.4f}")
+        total_global_reward = entropy_contribution_score + spatial_coverage + exploration_incentive + coverage_score
+        print(f"Global reward (total)        : {total_global_reward:.4f}")
+        
+        # UAV contributions
+        print("UAV Contributions:")
+        for i, c in enumerate(contributions):
+            print(f"  UAV {i}: contribution = {c:.4f}")
+
+        print("===================")

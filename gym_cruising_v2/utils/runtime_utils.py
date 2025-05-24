@@ -82,6 +82,8 @@ def parse_args():
                         help="minimum distance between UAVs before a collision is considered (in meters)")
     
     # GU specific arguments
+    parser.add_argument("--max-gu-number", type=int, default=120,
+                        help="the max number of GUs in the environment")
     parser.add_argument("--starting-gu-number", type=int, default=30,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--spawn-gu-prob", type=float, default=0.0005,
@@ -94,7 +96,7 @@ def parse_args():
                         help="SINR threshold (in dB) above which a ground user is considered covered")
     
     # Grid specific arguments
-    parser.add_argument("--window-width", type=int, default=500,
+    parser.add_argument("--window-width", type=int, default=250,
                         help="the width size of the PyGame window")
     parser.add_argument("--window-height", type=int, default=500,
                         help="the height size of the PyGame window")

@@ -51,12 +51,12 @@ class Cruise(Env):
         self.init_environment(options=options)
 
         observation = self.get_observation()
-        
+        '''
         print("Returned obs:")
         for k, v in observation.items():
             print(f"{k}: shape={v.shape}, dtype={v.dtype}")
             print("Expected:", self.observation_space[k])
-        
+        '''
         assert self.observation_space.contains(observation)
         terminated = self.check_if_terminated()
         info = self.create_info(terminated)
@@ -73,12 +73,32 @@ class Cruise(Env):
         self.perform_action(actions)
 
         state = self.get_observation()
-        '''
+        
+        state["map_exploration_states"] = np.clip(state["map_exploration_states"], 0.0, 1.0)
+        state["uav_states"] = np.clip(state["uav_states"], -1.0, 1.0)
+        state["covered_users_states"] = np.clip(state["covered_users_states"], -1.0, 1.0)
+        state["uav_mask"] = state["uav_mask"].astype(bool)
+        state["gu_mask"] = state["gu_mask"].astype(bool)
+        
+
+        # Controllo dettagliato per ciascun componente
+        for key, value in state.items():
+            space = self.observation_space.spaces[key]
+            if not space.contains(value):
+                print(f"Componente '{key}' fuori dai limiti:")
+                print(f"Valore minimo osservato: {np.min(value)}")
+                print(f"Valore massimo osservato: {np.max(value)}")
+                print(f"Limite inferiore consentito: {space.low}")
+                print(f"Limite superiore consentito: {space.high}")
+                print(f"Tipo di dato atteso: {space.dtype}, tipo di dato effettivo: {value.dtype}")
+                raise AssertionError(f"'{key}' non rispetta i limiti definiti in observation_space.")
+
+        
         print("Returned state:")
         for k, v in state.items():
             print(f"{k}: shape={v.shape}, dtype={v.dtype}")
             print("Expected:", self.observation_space[k])
-        '''
+        
         assert self.observation_space.contains(state)
         terminated = self.check_if_terminated()
         truncated = self.check_if_truncated()
