@@ -142,9 +142,9 @@ def parse_args():
                         help="the maximum variance of the clusters")
     
     # PPO specific arguments
-    parser.add_argument("--num-envs", type=int, default=4,
+    parser.add_argument("--num-envs", type=int, default=32,
                         help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=256,
+    parser.add_argument("--num-steps", type=int, default=128,
                         help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--updates-per-env", type=int, default=500,
                         help="the number of steps to run in each environment")

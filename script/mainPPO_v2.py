@@ -26,6 +26,7 @@ import gym_cruising_v2.utils.runtime_utils as utils
 BEST_VALIDATION = 0.0
 MAX_LAST_RCR = 0.0
 
+# Deprecated
 class MySyncVectorEnv(SyncVectorEnv):
     def __init__(self, env_fns, seed=None, options=None):
         super().__init__(env_fns)
@@ -36,7 +37,8 @@ class MySyncVectorEnv(SyncVectorEnv):
         for i in terminated_indices:
             # reset con seed e options
             self.envs[i].reset(seed=self._reset_seed, options=self._reset_options)
-            
+
+# Deprecated            
 def make_env_factory(args):
     def _init():
         env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
@@ -399,7 +401,7 @@ if __name__ == "__main__":
             wandb.define_metric("charts/SPS", step_metric="global_step")
 
 
-        env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
+        #env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
         
         ppo_net = PPONet(embed_dim=args.embedded_dim).to(device)
         
@@ -489,11 +491,11 @@ if __name__ == "__main__":
                     state = next_state
                     print(global_step)
             '''
-            options = get_set_up()
-            seed = int(time.perf_counter())
-            env_fns = [make_env_factory(args) for _ in range(args.num_envs)]
-            envs = MySyncVectorEnv(env_fns, seed, options)
-            states, infos = envs.reset(seed=seed, options=options)
+            args.seed = int(time.perf_counter())
+            args.options = get_set_up()
+            envs = gym.make_vec('gym_cruising_v2:Cruising-v0', num_envs=args.num_envs, vectorization_mode="async", args=args, render_mode=args.render_mode)
+            print(envs.metadata["autoreset_mode"])
+            states, infos = envs.reset()
 
             # Rollout
             for step in range(args.num_steps):

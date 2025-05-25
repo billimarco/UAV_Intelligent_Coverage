@@ -22,6 +22,8 @@ class Cruise(Env):
 
     grid: Grid
     world: Tuple[Line, ...]
+    seed : int
+    options : dict
 
     metadata = {"render_modes": ["human"], "render_fps": 8}
 
@@ -43,12 +45,21 @@ class Cruise(Env):
         self.y_offset = args.y_offset
         self.wall_width = args.wall_width
         
+        self.seed = args.seed
+        self.options = args.options
+        
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
 
-        super().reset(seed=seed, options=options)
-        np.random.seed(seed)
+        if seed is not None:
+            self.seed = seed
 
-        self.init_environment(options=options)
+        if options is not None:
+            self.options = options
+
+        super().reset(seed=self.seed, options=self.options)
+        np.random.seed(self.seed)
+
+        self.init_environment(options=self.options)
 
         observation = self.get_observation()
         '''
@@ -80,7 +91,7 @@ class Cruise(Env):
         state["uav_mask"] = state["uav_mask"].astype(bool)
         state["gu_mask"] = state["gu_mask"].astype(bool)
         
-
+        '''
         # Controllo dettagliato per ciascun componente
         for key, value in state.items():
             space = self.observation_space.spaces[key]
@@ -98,7 +109,7 @@ class Cruise(Env):
         for k, v in state.items():
             print(f"{k}: shape={v.shape}, dtype={v.dtype}")
             print("Expected:", self.observation_space[k])
-        
+        '''
         assert self.observation_space.contains(state)
         terminated = self.check_if_terminated()
         truncated = self.check_if_truncated()

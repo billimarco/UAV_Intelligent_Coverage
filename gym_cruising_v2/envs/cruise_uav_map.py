@@ -118,10 +118,16 @@ class CruiseUAVWithMap(Cruise):
         })
 
     def reset(self, seed=None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
+        if seed is not None:
+            self.seed = seed
+
+        if options is not None:
+            self.options = options
+            
         self.uav = []
         self.gu = []
-        self.uav_number = options["uav"]
-        self.starting_gu_number = options["gu"]
+        self.uav_number = self.options["uav"]
+        self.starting_gu_number = self.options["gu"]
         #RAND
         #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
@@ -130,8 +136,8 @@ class CruiseUAVWithMap(Cruise):
         self.simultaneous_uavs_point_coverage = 0
         self.grid.reset()
         self.reset_observation_action_space()
-        np.random.seed(seed)
-        return super().reset(seed=seed, options=options)
+        np.random.seed(self.seed)
+        return super().reset(seed=self.seed, options=self.options)
     
     def reset_gu(self, options: Optional[dict] = None) -> np.ndarray:
         self.gu = []
@@ -538,7 +544,7 @@ class CruiseUAVWithMap(Cruise):
                 individual_rewards.append(reward)
         ''' 
 
-        self.log_rewards(contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score)
+        #self.log_rewards(contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score)
         return global_reward
     
     
