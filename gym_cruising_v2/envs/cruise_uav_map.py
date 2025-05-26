@@ -489,6 +489,7 @@ class CruiseUAVWithMap(Cruise):
         # REWARD GLOBALE
         global_reward = 0
         
+        
         # 1. Entropia sulla distribuzione dei contributi
         num_uav = len(self.uav)
         contributions = [
@@ -502,15 +503,15 @@ class CruiseUAVWithMap(Cruise):
             proportions = [1.0 / num_uav] * num_uav
         entropy = -sum(p * np.log2(p + 1e-8) for p in proportions)
         max_entropy = np.log2(num_uav)
-        entropy_contribution_score = entropy / max_entropy
         
         if num_uav <= 1:
             entropy_contribution_score = 1.0  # oppure 1.0, a seconda della logica che vuoi seguire
         else:
             entropy_contribution_score = entropy / max_entropy
-
-        entropy_contribution_score = 0 # BLOCCO ENTROPIA
+        
+        entropy_contribution_score = 0.0 # Per ora disabilitato, ma puoi riattivarlo se necessario    
         global_reward += entropy_contribution_score
+        
         
         # 2. Copertura spaziale (evita UAV sovrapposti)
         if self.total_uavs_point_coverage > 0:
@@ -531,6 +532,13 @@ class CruiseUAVWithMap(Cruise):
             self.max_gu_covered = max(self.max_gu_covered, self.gu_covered)
         coverage_score = self.gu_covered / self.max_gu_covered if self.max_gu_covered > 0 else 0.0
         global_reward += coverage_score
+        
+        global_reward /= 3.0  # Normalizza il reward globale (divide per il numero di metriche considerate)
+        
+        #5. Penalità per UAV terminati
+        if any(terminated):
+            global_reward = -5.0
+            
 
         '''  
         # REWARD INDIVIDUALE

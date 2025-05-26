@@ -18,7 +18,7 @@ class PPONet(nn.Module):
         # Critic: Funzione di valore
         self.critic_head = CriticHead(embed_dim)
 
-    def forward(self, uav_input, gu_input, uav_mask=None, gu_mask=None):
+    def forward(self, uav_input, gu_input, uav_mask=None, gu_mask=None, actions=None):
         """
         Args:
             uav_input (Tensor): (B, U, uav_dim) - Caratteristiche degli UAV.
@@ -40,14 +40,20 @@ class PPONet(nn.Module):
 
         # Distribuzione normale per campionare le azioni
         dist = Normal(mean, std)
-        raw_actions = dist.rsample()  # campionamento con reparametrizzazione
+        if actions is None:
+            raw_actions = dist.rsample()  # campionamento con reparametrizzazione
+            
 
-        # Squash in [-1, 1]
-        actions = torch.tanh(raw_actions)
+            # Squash in [-1, 1]
+            actions = torch.tanh(raw_actions)
 
-        # Applicare la maschera: forzare le azioni degli UAV fittizi a 0
-        actions = actions * uav_mask.unsqueeze(-1).float()  # Dove la maschera è True (UAV reale), lascia le azioni intatte
+            # Applicare la maschera: forzare le azioni degli UAV fittizi a 0
+            actions = actions * uav_mask.unsqueeze(-1).float()  # Dove la maschera è True (UAV reale), lascia le azioni intatte
+        else:
+            # Invertiamo il tanh: azione è già squashed, la "desquashiamo"
+            raw_actions = torch.atanh(actions)  # Invertiamo il tanh per ottenere l'azione grezza
 
+            
         # log_probs con correzione di tanh (importante per backprop)
         log_probs = dist.log_prob(raw_actions).sum(-1)  # (B, U)
         log_probs -= torch.log(1 - actions.pow(2) + 1e-6).sum(-1)  # correzione tanh

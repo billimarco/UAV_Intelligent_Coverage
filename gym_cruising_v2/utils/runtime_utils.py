@@ -31,8 +31,8 @@ def parse_args():
                         help="if toggled, the learning rate will be annealed")
     parser.add_argument("--seed", type=int, default=9,
                         help="seed of the experiment")
-    parser.add_argument("--total-timesteps", type=int, default=99,
-                        help="total timesteps of the experiments")
+    parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -51,7 +51,7 @@ def parse_args():
                         help="Render mode (e.g., human or None")
     parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the training will be performed")
-    parser.add_argument("--use_trained", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="If set, loads and runs a pre-trained model")
     parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="numerical test using trained model")
@@ -96,7 +96,7 @@ def parse_args():
                         help="SINR threshold (in dB) above which a ground user is considered covered")
     
     # Grid specific arguments
-    parser.add_argument("--window-width", type=int, default=250,
+    parser.add_argument("--window-width", type=int, default=500,
                         help="the width size of the PyGame window")
     parser.add_argument("--window-height", type=int, default=500,
                         help="the height size of the PyGame window")
@@ -146,7 +146,7 @@ def parse_args():
                         help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128,
                         help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--updates-per-env", type=int, default=500,
+    parser.add_argument("--updates-per-env", type=int, default=200,
                         help="the number of steps to run in each environment")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Use GAE for advantage computation")
@@ -156,7 +156,7 @@ def parse_args():
                         help="the lambda for the general advantage estimation")
     parser.add_argument("--num-minibatches", type=int, default=8,
                         help="the number of mini-batches") 
-    parser.add_argument("--update-epochs", type=int, default=1,
+    parser.add_argument("--update-epochs", type=int, default=4,
                         help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggles advantages normalization")
