@@ -25,7 +25,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default="ppo_vanilla",
                         help="the name of this experiment")
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4,
+    parser.add_argument("--learning-rate", type=float, default=1.0e-3,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the learning rate will be annealed")
@@ -58,7 +58,7 @@ def parse_args():
     
     
     # NN specific arguments
-    parser.add_argument("--embedded-dim", type=int, default=32,
+    parser.add_argument("--embedded-dim", type=int, default=128,
                     help="Size of the embedding vector used to represent agent observations or features")
     
     # Reward specific arguments
@@ -142,11 +142,11 @@ def parse_args():
                         help="the maximum variance of the clusters")
     
     # PPO specific arguments
-    parser.add_argument("--num-envs", type=int, default=32,
+    parser.add_argument("--num-envs", type=int, default=16,
                         help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128,
                         help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--updates-per-env", type=int, default=200,
+    parser.add_argument("--updates-per-env", type=int, default=500,
                         help="the number of steps to run in each environment")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Use GAE for advantage computation")
@@ -156,19 +156,19 @@ def parse_args():
                         help="the lambda for the general advantage estimation")
     parser.add_argument("--num-minibatches", type=int, default=8,
                         help="the number of mini-batches") 
-    parser.add_argument("--update-epochs", type=int, default=4,
+    parser.add_argument("--update-epochs", type=int, default=5,
                         help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggles advantages normalization")
-    parser.add_argument("--clip-coef", type=float, default=0.2,
+    parser.add_argument("--clip-coef", type=float, default=0.3,
                         help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="Toggles whether or not to use a clipped loss for the value function")
-    parser.add_argument("--ent-coef", type=float, default=0.01,
+    parser.add_argument("--ent-coef", type=float, default=0.001,
                         help="coefficient of the entropy")
-    parser.add_argument("--vf-coef", type=float, default=0.5,
+    parser.add_argument("--vf-coef", type=float, default=1.00,
                         help="coefficient of the value function")
-    parser.add_argument("--max-grad-norm", type=float, default=0.5,
+    parser.add_argument("--max-grad-norm", type=float, default=1.0,
                         help="the maximum norm for the gradient clipping")
     
 

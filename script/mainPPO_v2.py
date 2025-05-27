@@ -265,7 +265,7 @@ def get_set_up():
         options = get_uniform_options()
     ''' 
     options = {
-        "uav": 2,
+        "uav": 3,
         "gu": 90,
         "clustered": False,
         "clusters_number": 0,
@@ -290,16 +290,18 @@ def test(agent, num_episodes=32, global_step=0):
         np.random.seed(ep)
         state, info = env.reset(seed=ep, options=options)
         done = False
-        steps = 1
+        steps = 0
         sum_episode_reward = 0
         sum_last_rcr = 0
 
         while not done:
+            steps += 1
             map_exploration, uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch(state)
             
             # Inference
             with torch.no_grad():
                 actions, _, _, _ = agent(
+                    map_exploration,           # shape: (1, H, W)
                     uav_info,                  # shape: (1, UAV, 4)    
                     connected_gu_positions,    # shape: (1, GU, 2)
                     uav_mask,                  # shape: (1, UAV)
@@ -422,7 +424,7 @@ if __name__ == "__main__":
 
         #env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
         
-        ppo_net = PPONet(embed_dim=args.embedded_dim).to(device)
+        ppo_net = PPONet(embed_dim=args.embedded_dim, map_shape=(args.window_height*args.resolution, args.window_width*args.resolution)).to(device)
         
         args.seed = int(time.perf_counter())
         args.options = get_set_up()
@@ -447,7 +449,6 @@ if __name__ == "__main__":
         start_time = time.time()
         
         for update in range(0, args.updates_per_env):
-            print(f"Update {update + 1}/{args.updates_per_env}")
 
             if update % 20 == 0 and update % args.updates_per_env != 0:
                 print("\n<------------------------->")
@@ -463,6 +464,7 @@ if __name__ == "__main__":
                 lrnow = frac * args.learning_rate
                 optimizer.param_groups[0]["lr"] = lrnow
 
+            print(f"Update {update + 1}/{args.updates_per_env}")
             
             # Rollout
             rollout_start_time = time.time()
@@ -478,6 +480,7 @@ if __name__ == "__main__":
                 # Ottieni azioni da PPO
                 with torch.no_grad():
                     actions, logprobs, entropy, values = ppo_net(
+                        map_exploration,           # [B, H, W]
                         uav_info,                  # [B, UAV, 4]
                         connected_gu_positions,    # [B, GU, 2]
                         uav_mask,                  # [B, UAV]
@@ -567,7 +570,7 @@ if __name__ == "__main__":
 
 
                     # Forward della rete
-                    _, newlogprob, entropy, newvalue = ppo_net(mb_state_uav, mb_state_connected_gu, mb_uav_mask, mb_gu_mask, mb_actions)
+                    _, newlogprob, entropy, newvalue = ppo_net(mb_map_exploration, mb_state_uav, mb_state_connected_gu, mb_uav_mask, mb_gu_mask, mb_actions)
                     
                     mb_masked_logprobs = mb_logprobs[mb_uav_mask]          # Maschera su logprobs
                     mb_masked_newlogprob = newlogprob[mb_uav_mask]  # Maschera su logprobs

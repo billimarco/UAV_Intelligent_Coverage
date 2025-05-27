@@ -537,7 +537,7 @@ class CruiseUAVWithMap(Cruise):
         
         #5. Penalità per UAV terminati
         if any(terminated):
-            global_reward = -5.0
+            global_reward = -10.0
             
 
         '''  
