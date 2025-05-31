@@ -25,7 +25,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exp-name", type=str, default="ppo_vanilla",
                         help="the name of this experiment")
-    parser.add_argument("--learning-rate", type=float, default=1.0e-3,
+    parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the learning rate will be annealed")
@@ -58,7 +58,7 @@ def parse_args():
     
     
     # NN specific arguments
-    parser.add_argument("--embedded-dim", type=int, default=128,
+    parser.add_argument("--embedded-dim", type=int, default=32,
                     help="Size of the embedding vector used to represent agent observations or features")
     
     # Reward specific arguments
@@ -78,13 +78,13 @@ def parse_args():
                     help="UAV flight altitude in meters")
     parser.add_argument("--minimum-starting-distance-between-uav", type=float, default=50.0,
                     help="minimum initial distance between UAVs in meters")
-    parser.add_argument("--collision-distance", type=float, default=10.0,
+    parser.add_argument("--collision-distance", type=float, default=5.0,
                         help="minimum distance between UAVs before a collision is considered (in meters)")
     
     # GU specific arguments
     parser.add_argument("--max-gu-number", type=int, default=120,
                         help="the max number of GUs in the environment")
-    parser.add_argument("--starting-gu-number", type=int, default=30,
+    parser.add_argument("--starting-gu-number", type=int, default=90,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--spawn-gu-prob", type=float, default=0.0005,
                         help="probability of spawning a ground unit per cell or timestep")
@@ -124,7 +124,7 @@ def parse_args():
                         help="Path loss for LoS in dB (1.6 in dense urban)")
     parser.add_argument("--rate-of-growth", type=float, default=-0.05,
                         help="Rate of growth for some propagation model parameter")
-    parser.add_argument("--transmission-power", type=float, default=-6.3,
+    parser.add_argument("--transmission-power", type=float, default=-6.7716,
                         help="Transmission power in dBm")
     parser.add_argument("--channel-bandwidth", type=float, default=2e6,
                         help="Channel bandwidth in Hz (e.g. 2e6 for 2 MHz)")
@@ -156,19 +156,21 @@ def parse_args():
                         help="the lambda for the general advantage estimation")
     parser.add_argument("--num-minibatches", type=int, default=8,
                         help="the number of mini-batches") 
-    parser.add_argument("--update-epochs", type=int, default=5,
+    parser.add_argument("--update-epochs", type=int, default=4,
                         help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggles advantages normalization")
-    parser.add_argument("--clip-coef", type=float, default=0.3,
+    parser.add_argument("--norm-value", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=False,
+                        help="Toggles values(returns) normalization")
+    parser.add_argument("--clip-coef", type=float, default=0.2,
                         help="the surrogate clipping coefficient")
     parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="Toggles whether or not to use a clipped loss for the value function")
     parser.add_argument("--ent-coef", type=float, default=0.001,
                         help="coefficient of the entropy")
-    parser.add_argument("--vf-coef", type=float, default=1.00,
+    parser.add_argument("--vf-coef", type=float, default=0.50,
                         help="coefficient of the value function")
-    parser.add_argument("--max-grad-norm", type=float, default=1.0,
+    parser.add_argument("--max-grad-norm", type=float, default=0.5,
                         help="the maximum norm for the gradient clipping")
     
 

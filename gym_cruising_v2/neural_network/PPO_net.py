@@ -8,11 +8,11 @@ from torch_geometric.nn import GCNConv
 from torch.distributions import Normal
 
 class PPONet(nn.Module):
-    def __init__(self, embed_dim=16, map_shape=(64, 64)):
+    def __init__(self, embed_dim=16):
         super().__init__()
         
-        #self.backbone = PPOTransformer(embed_dim)
-        self.backbone = PPOTry(embed_dim, map_shape)  # Backbone per l'estrazione delle caratteristiche
+        self.backbone = PPOTransformer(embed_dim)
+        #self.backbone = PPOTry(embed_dim)  # Backbone per l'estrazione delle caratteristiche
         
         # Actor: Politica (output probabilità di azioni)
         self.actor_head = ActorHead(embed_dim)
@@ -33,6 +33,7 @@ class PPONet(nn.Module):
         """
         
         # Gestione del caso in cui non ci sono GUs (gu_input vuoto)
+        #uav_tokens = self.backbone(uav_input, gu_input, uav_mask, gu_mask) 
         uav_tokens = self.backbone(map_exploration, uav_input, gu_input, uav_mask, gu_mask)  # (B, U, D)
             
         mean, std = self.actor_head(uav_tokens, uav_mask)  # (B, U, 2)
@@ -69,7 +70,7 @@ class PPONet(nn.Module):
         # Applicare la maschera all'entropia: gli UAV fittizi non contribuiscono all'entropia
         entropy = entropy * uav_mask.float()  # Dove la maschera è True (UAV reale), lascia l'entropia intatta
 
-        values = self.critic_head(uav_tokens, uav_mask)  # (B,)
+        values = self.critic_head(uav_tokens, uav_mask, actions)  # (B,)
         return actions, log_probs, entropy, values
     
     def backbone_forward(self, map_exploration, uav_input, gu_input, uav_mask=None, gu_mask=None):

@@ -85,8 +85,13 @@ class Grid:
         # Zona di spawn: angolo in basso a sinistra, con offset (in punti)
         spawn_offset_res = spawn_offset * resolution
         self.spawn_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (
-            ((spawn_offset_res, window_width*resolution  - spawn_offset_res),
-             (spawn_offset_res, window_height*resolution - spawn_offset_res)),
+            ((spawn_offset_res, self.grid_width  - spawn_offset_res),
+             (spawn_offset_res, self.grid_height - spawn_offset_res)),
+        )
+        
+        self.available_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (
+            ((0, self.grid_width),
+             (0, self.grid_height)),
         )
 
     def reset(self):

@@ -4,6 +4,7 @@ from abc import abstractmethod
 from copy import deepcopy
 from typing import Tuple, List
 
+import random
 import numpy as np
 import pygame
 from gymnasium import Env
@@ -45,7 +46,7 @@ class Cruise(Env):
         self.y_offset = args.y_offset
         self.wall_width = args.wall_width
         
-        self.seed = args.seed
+        self.seed = random.randint(0, 10000)
         self.options = args.options
         
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:

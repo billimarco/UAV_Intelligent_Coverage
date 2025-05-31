@@ -20,30 +20,12 @@ import wandb
 
 from gymnasium.vector import SyncVectorEnv, AsyncVectorEnv
 from gym_cruising_v2.neural_network.PPO_net import PPONet
+from gym_cruising_v2.utils.value_normalizer import ValueNormalizer
 import gym_cruising_v2.utils.runtime_utils as utils
 
 
 BEST_VALIDATION = 0.0
 MAX_LAST_RCR = 0.0
-
-# Deprecated
-class MySyncVectorEnv(SyncVectorEnv):
-    def __init__(self, env_fns, seed=None, options=None):
-        super().__init__(env_fns)
-        self._reset_seed = seed
-        self._reset_options = options
-
-    def _handle_terminated_envs(self, terminated_indices):
-        for i in terminated_indices:
-            # reset con seed e options
-            self.envs[i].reset(seed=self._reset_seed, options=self._reset_options)
-
-# Deprecated            
-def make_env_factory(args):
-    def _init():
-        env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
-        return env
-    return _init
 
 def compute_gae(rewards, values, dones):
     """
@@ -51,13 +33,13 @@ def compute_gae(rewards, values, dones):
     per un singolo critic centralizzato, considerando più UAV.
     
     Args:
-        rewards: (num_envs, num_steps, max_uav_number) - Rewards per ogni UAV.
+        rewards: (num_envs, num_steps, 1) - Rewards singolo.
         values: (num_envs, num_steps, 1) - Valori stimati per ogni stato (centralizzato).
         dones: (num_envs, num_steps, 1) - Flag di terminazione per ogni ambiente.
         
     Returns:
-        advantages: (num_envs, num_steps, max_uav_number) - Advantages per ogni UAV.
-        returns: (num_envs, num_steps, max_uav_number) - Returns per ogni UAV.
+        advantages: (num_envs, num_steps, 1) - Advantage singolo.
+        returns: (num_envs, num_steps, 1) - Return singolo.
     """
     num_envs, num_steps, max_uav = rewards.shape
 
@@ -67,6 +49,12 @@ def compute_gae(rewards, values, dones):
         torch.zeros((num_envs, 1, 1), dtype=values.dtype, device=values.device)  # Aggiungi una colonna finale di zeri
     ], dim=1)  # → (num_envs, num_steps + 1, 1)
 
+    '''
+    dones_ext = torch.cat([
+        dones, 
+        torch.ones((num_envs, 1, 1), dtype=dones.dtype, device=dones.device)  # Done=True finale
+    ], dim=1)
+    '''
     advantages = torch.zeros_like(rewards)
     gae = torch.zeros((num_envs, max_uav), dtype=rewards.dtype, device=rewards.device)
 
@@ -87,118 +75,6 @@ def compute_gae(rewards, values, dones):
     returns = advantages + values[:, :, 0].unsqueeze(-1).expand(-1, -1, max_uav)  # Broadcasting per adattarsi a (num_envs, num_steps, max_uav)
 
     return advantages, returns
-
-# Deprecated
-def add_reward_padding(rewards):
-    pad_count = args.max_uav_number - args.uav_number
-    if pad_count > 0:
-
-        # Costruisci padding come Tensor
-        reward_padding = torch.zeros(pad_count, dtype=rewards.dtype, device=rewards.device)
-
-        # Concatenazione Tensor
-        rewards = torch.cat([rewards, reward_padding], dim=0)
-
-    return rewards
-
-# Deprecated
-def add_padding(actions, reward, logprobs, values):
-    pad_count = args.max_uav_number - args.uav_number
-    if pad_count > 0:
-
-        # Costruisci padding come Tensor
-        action_padding = torch.full((pad_count, 2), 100.0, dtype=actions.dtype, device=actions.device)
-        reward_padding = torch.zeros(pad_count, dtype=reward.dtype, device=reward.device)
-        logprob_padding = torch.full((pad_count,), -1e8, dtype=logprobs.dtype, device=logprobs.device)
-        values_padding = torch.zeros(pad_count, dtype=values.dtype, device=values.device)
-
-        # Concatenazione Tensor
-        actions = torch.cat([actions, action_padding], dim=0)
-        reward = torch.cat([reward, reward_padding], dim=0)
-        logprobs = torch.cat([logprobs, logprob_padding], dim=0)
-        values = torch.cat([values, values_padding], dim=0)
-
-    return actions, reward, logprobs, values
-
-# Deprecated
-def add_padding_state_uav(state, uav_number):
-    # Padding per lo stato (in NumPy)
-    padding = np.array([[0., 0.]])
-    # Applica padding allo stato (UAV*2 → max_UAV*2)
-    for i in range(uav_number*2, args.max_uav_number * 2):
-        state["uav_states"] = np.insert(state["uav_states"], i, padding, axis=0)
-            
-    return state
-
-# Deprecated
-def process_state_batch_old(state_batch):
-    """
-    Estrae le info UAV e GU da un batch di stati e produce anche le maschere booleane.
-
-    Returns:
-        uav_info_batch: [B, max_uav, 4]
-        connected_gu_positions_batch: [B, max_gu, 2]
-        uav_mask: [B, max_uav] (True = reale, False = padding)
-        gu_mask: [B, max_gu]  (True = reale, False = padding)
-    """
-
-    uav_info_list = []
-    gu_pos_list = []
-    uav_masks = []
-    gu_masks = []
-
-    for array in state_batch:
-        # UAV info: reshape e conversione
-        uav_raw = state["uav_states"]  # shape: (n_uav * 2, 2)
-        uav_flat = uav_raw.reshape(-1)  # flatten to 1D: shape = (n_uav * 4,)
-        n_uav = len(uav_flat) // 4
-        uav_info = uav_raw.reshape(n_uav, 4)  # [n_uav, 4]
-        uav_info_tensor = torch.from_numpy(uav_info).float().to(device)
-
-        # Padding UAV to max_uav
-        pad_uav = args.max_uav_number - uav_info_tensor.shape[0]
-        if pad_uav > 0:
-            uav_info_tensor = F.pad(uav_info_tensor, (0, 0, 0, pad_uav), value=0.0)
-            
-        uav_info_list.append(uav_info_tensor)
-        
-        # UAV mask: True dove almeno un valore è non zero
-        uav_mask = (uav_info_tensor.abs().sum(dim=-1) > 0)
-        uav_masks.append(uav_mask)
-
-        # GU positions: conversione
-        gu_positions = state["covered_users_states"]
-        if gu_positions.size == 0:
-            gu_tensor = torch.zeros((1, 2), dtype=torch.float32, device=device)  # dummy GU
-            gu_mask = torch.tensor([False], dtype=torch.bool, device=device)
-        else:
-            gu_tensor = torch.from_numpy(gu_positions).float().to(device)
-            gu_mask = (gu_tensor.abs().sum(dim=-1) > 0)
-
-        gu_pos_list.append(gu_tensor)
-        gu_masks.append(gu_mask)
-
-    # Stack UAV info (dimensione fissa)
-    uav_info_batch = torch.stack(uav_info_list)                 # [B, max_uav, 4]
-    uav_mask = torch.stack(uav_masks)                           # [B, max_uav]
-
-    # Padding GU positions (dimensione variabile)
-    max_gu = max(t.shape[0] for t in gu_pos_list)
-    padded_gu_pos = []
-    padded_gu_masks = []
-
-    for gu, mask in zip(gu_pos_list, gu_masks):
-        pad_len = max_gu - gu.shape[0]
-        if pad_len > 0:
-            gu = F.pad(gu, (0, 0, 0, pad_len), value=0.0)
-            mask = F.pad(mask, (0, pad_len), value=False)
-        padded_gu_pos.append(gu)
-        padded_gu_masks.append(mask)
-
-    connected_gu_positions_batch = torch.stack(padded_gu_pos)  # [B, max_gu, 2]
-    gu_mask = torch.stack(padded_gu_masks)                     # [B, max_gu]
-
-    return uav_info_batch, connected_gu_positions_batch, uav_mask, gu_mask
 
 def process_state_batch(state_batch):
     """
@@ -278,6 +154,7 @@ def test(agent, num_episodes=32, global_step=0):
     agent.eval()
     total_rewards = []
     rcr_values = []
+    steps_vec = []
     
     for ep in range(num_episodes):
         options = {
@@ -292,7 +169,9 @@ def test(agent, num_episodes=32, global_step=0):
         done = False
         steps = 0
         sum_episode_reward = 0
-        sum_last_rcr = 0
+        sum_rcr = 0
+        out_area = False
+        collision = False
 
         while not done:
             steps += 1
@@ -318,21 +197,25 @@ def test(agent, num_episodes=32, global_step=0):
             
             # Passaggio ambiente
             next_state, reward, terminated, truncated, info = env.step(env_action)
-            if steps == 384:
+            if steps == 500:
                 truncated = True
             done = terminated or truncated
             sum_episode_reward += reward
+            sum_rcr += float(info['RCR'])
             state = next_state
             if done:
-                sum_last_rcr += float(info['RCR'])
+                out_area = info["Out_Area"]
+                collision = info["Collision"]
                 break
         
         # Aggiungi l'RCR medio per l'episodio
-        rcr_values.append(sum_last_rcr / (1 if done else 0))  # Media di RCR per episodio
+        steps_vec.append(steps)
+        rcr_values.append(sum_rcr / steps)  # Media di RCR per episodio
         total_rewards.append(sum_episode_reward)
-        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, clusters = {options['clusters_number']}, steps = {steps}, reward = {sum_episode_reward:.2f}, RCR = {sum_last_rcr:.2f}")
+        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, steps = {steps}, total_reward = {sum_episode_reward:.2f}, RCR = {sum_rcr / steps:.2f}, out_area = {out_area}, collision = {collision}")
 
     # Statistiche
+    mean_steps = np.mean(steps_vec)
     mean_reward = np.mean(total_rewards)
     std_reward = np.std(total_rewards)
     mean_rcr = np.mean(rcr_values)
@@ -341,6 +224,7 @@ def test(agent, num_episodes=32, global_step=0):
     print(f"\nTest completed over {num_episodes} episodes.")
     print(f"Average reward: {mean_reward:.2f} ± {std_reward:.2f}")
     print(f"Average RCR : {mean_rcr:.2f} ± {std_rcr:.2f}")
+    print(f"Average Steps : {mean_steps:.2f}")
 
     # Logging su Weights & Biases
     if wandb.run is not None:
@@ -349,6 +233,7 @@ def test(agent, num_episodes=32, global_step=0):
             "test/std_reward": std_reward,
             "test/mean_rcr": mean_rcr,
             "test/std_rcr": std_rcr,
+            "test/mean_steps": mean_steps,
         }, step=global_step)
         
     '''
@@ -411,6 +296,7 @@ if __name__ == "__main__":
             wandb.define_metric("test/std_reward", step_metric="global_step")
             wandb.define_metric("test/mean_rcr", step_metric="global_step")
             wandb.define_metric("test/std_rcr", step_metric="global_step")
+            wandb.define_metric("test/mean_steps", step_metric="global_step")
             wandb.define_metric("charts/learning_rate", step_metric="global_step")
             wandb.define_metric("losses/value_loss", step_metric="global_step")
             wandb.define_metric("losses/policy_loss", step_metric="global_step")
@@ -424,7 +310,10 @@ if __name__ == "__main__":
 
         #env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
         
-        ppo_net = PPONet(embed_dim=args.embedded_dim, map_shape=(args.window_height*args.resolution, args.window_width*args.resolution)).to(device)
+        # Path al file dei pesi
+        model_path = os.path.join(project_root, "neural_network", "PPO.pth")
+        model_path_test = os.path.join(project_root, "neural_network", "PPO_test.pth")
+        ppo_net = PPONet(embed_dim=args.embedded_dim).to(device)
         
         args.seed = int(time.perf_counter())
         args.options = get_set_up()
@@ -455,6 +344,7 @@ if __name__ == "__main__":
                 print(f"Testing at update {update}")
                 test_time = time.time()
                 test(agent=ppo_net, num_episodes=32, global_step=global_step)
+                torch.save(ppo_net.state_dict(), model_path_test)
                 print(f"Tested! Time elaplesed {time.time() - test_time}")
                 print("<------------------------->\n")
                 start_time = time.time()
@@ -470,7 +360,6 @@ if __name__ == "__main__":
             rollout_start_time = time.time()
             states, infos = envs.reset()
 
-            # Rollout
             for step in range(args.num_steps):
                 global_step += args.num_envs
 
@@ -525,6 +414,13 @@ if __name__ == "__main__":
                 dones=dones_tensor
             )
             
+            if args.norm_value:
+                if update == 0:
+                    value_normalizer = ValueNormalizer()
+
+                value_normalizer.update(returns_tensor)
+                returns_tensor = value_normalizer.normalize(returns_tensor)
+            
             rollout_end_time = time.time()
             print(f"Rollout time: {rollout_end_time - rollout_start_time:.2f} seconds")
             
@@ -578,7 +474,6 @@ if __name__ == "__main__":
                     mb_newvalues = newvalue.unsqueeze(-1)       # Aggiungi dimensione per allineamento
                     mb_entropy_masked = entropy[mb_uav_mask]      # Maschera su entropy
                     
-                    
                     logratio = mb_masked_newlogprob - mb_masked_logprobs
                     ratio = logratio.exp()
 
@@ -590,7 +485,7 @@ if __name__ == "__main__":
                     # Normalizza le advantages
                     if args.norm_adv:
                         mb_advantages_masked = (mb_advantages_masked - mb_advantages_masked.mean()) / (mb_advantages_masked.std() + 1e-8)
-
+                        
                     # Policy loss
                     pg_loss1 = -mb_advantages_masked * ratio
                     pg_loss2 = -mb_advantages_masked * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
@@ -621,6 +516,7 @@ if __name__ == "__main__":
             # Log training metrics
             y_pred = flat_values.cpu().numpy()
             y_true = flat_returns.cpu().numpy()
+            print("Primi 10 differenze tra i valori di y_true e y_pred:", y_true[:10] - y_pred[:10])
             var_y = np.var(y_true)
             explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
             
@@ -642,8 +538,6 @@ if __name__ == "__main__":
             
         test(agent=ppo_net, num_episodes=32, global_step=global_step)
         
-        # Path al file dei pesi
-        model_path = os.path.join(project_root, "neural_network", "PPO.pth")
         torch.save(ppo_net.state_dict(), model_path)
     
     if args.use_trained:

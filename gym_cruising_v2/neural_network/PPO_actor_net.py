@@ -32,7 +32,9 @@ class ActorHead(nn.Module):
         x = F.relu(self.fl2(x))
         
         mean_valid = self.fl3(x)
-        std_valid = torch.exp(self.log_std).expand_as(mean_valid)
+        log_std_clipped = torch.clamp(self.log_std, min=-20, max=2)
+        std_valid = torch.exp(log_std_clipped).expand_as(mean_valid)
+
 
         # Inizializza i tensori di output
         mean = torch.zeros(B * U, 2, device=token.device)
@@ -45,6 +47,12 @@ class ActorHead(nn.Module):
         # Ripristina le dimensioni originali
         mean = mean.view(B, U, 2)
         std = std.view(B, U, 2)
+        
+        if torch.isnan(mean).any():
+            print("⚠️ NaN detected in mean!")
+        if torch.isnan(std).any():
+            print("⚠️ NaN detected in std!")
+
         
         return mean, std
         '''

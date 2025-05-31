@@ -5,22 +5,42 @@ import torch
 class PPOTransformer(nn.Module):
     def __init__(self, embed_dim=16):
         super(PPOTransformer, self).__init__()
+        
+        # CNN per la mappa
+        self.map_cnn = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((8, 8))
+        )
 
-        # TRANSFORMER ENCODER-DECODER
-        self.embedding_encoder = nn.Linear(2, embed_dim)  # Embedding per il Transformer encoder
-        self.embedding_decoder = nn.Linear(4, embed_dim)  # Embedding per il Transformer decoder
+        # Proiezioni di input
+        self.uav_proj = nn.Linear(4, embed_dim)
+        self.gu_proj = nn.Linear(2, embed_dim)
+        self.map_patch_proj = nn.Linear(64, embed_dim)
 
-        # LayerNorm for normalization of embeddings
-        self.layernorm_encoder = nn.LayerNorm(embed_dim)
-        self.layernorm_decoder = nn.LayerNorm(embed_dim)
+        # Normalizzazioni
+        self.norm_uav = nn.LayerNorm(embed_dim)
+        self.norm_gu = nn.LayerNorm(embed_dim)
+        self.norm_map = nn.LayerNorm(embed_dim)
 
         # LayerNorm for normalization of output
         self.layernorm_output = nn.LayerNorm(embed_dim)
+        
+        
+        # Positional Encoding learnable (max 512 token)
+        self.positional_encoding = nn.Parameter(torch.randn(1024, embed_dim))  # [max_len, D]
 
+        # Type embeddings: UAV=0, GU=1, MAP=2
+        self.type_embedding = nn.Embedding(3, embed_dim)
+
+        
         self.transformer_encoder_decoder = nn.Transformer(d_model=embed_dim, batch_first=True, num_encoder_layers=2, num_decoder_layers=2)
 
-    def forward(self, UAV_info, GU_positions, uav_mask=None, gu_mask=None):
-   
+    def forward(self, map_exploration, UAV_info, GU_positions, uav_mask=None, gu_mask=None):
         # Fix gu_mask se contiene righe tutte False
         if gu_mask is not None:
             all_false_rows = ~gu_mask.any(dim=1)  # (B,)
@@ -38,36 +58,78 @@ class PPOTransformer(nn.Module):
 
                 # Imposta GU_positions[:, 0, :] a un valore neutro/esplorativo
                 # Esempio: zero vector (B, D)
-                GU_positions[all_false_rows, 0, :] = torch.randn_like(GU_positions[all_false_rows, 0, :])
-        
-        # Embedding
-        source = self.embedding_encoder(GU_positions)  # (B, G, D)
-        target = self.embedding_decoder(UAV_info)      # (B, U, D)
+                GU_positions[all_false_rows, 0, :] = torch.randn_like(GU_positions[all_false_rows, 0, :])  
+                     
+        B, U, _ = UAV_info.shape
+        G = GU_positions.shape[1]
 
-        # Normalizzazione
-        source = self.layernorm_encoder(source)
-        target = self.layernorm_decoder(target)
+        # 1. Prepara input embedding
+        gu_tokens = self.norm_gu(self.gu_proj(GU_positions))    # [B, G, D]
+        uav_tokens = self.norm_uav(self.uav_proj(UAV_info))       # [B, U, D]
         
-        # Maschere per evitare calcoli su token fittizi
-        src_key_padding_mask = ~gu_mask if gu_mask is not None else None  # (B, G)
+        map_feat = self.map_cnn(map_exploration.unsqueeze(1))    # [B, 64, H', W']
+        map_feat = map_feat.flatten(2).transpose(1, 2)            # [B, N, 64] — N = H'*W'
+        map_tokens = self.norm_map(self.map_patch_proj(map_feat))       # [B, N, D]
+        
+        # --- Type encoding per l'encoder ---
+        B, N_uav, D = uav_tokens.shape
+        B, N_gu, D = gu_tokens.shape
+        B, N_map, D = map_tokens.shape
+
+        type_uav = torch.full((B, N_uav), 0, dtype=torch.long, device=uav_tokens.device)  # UAV = 0
+        type_gu = torch.full((B, N_gu), 1, dtype=torch.long, device=gu_tokens.device)     # GU = 1
+        type_map = torch.full((B, N_map), 2, dtype=torch.long, device=map_tokens.device)  # MAP = 2
+
+        type_tokens = torch.cat([
+            self.type_embedding(type_uav),
+            self.type_embedding(type_gu),
+            self.type_embedding(type_map)
+        ], dim=1)  # [B, N_total, D]
+
+        # --- Positional encoding per l'encoder ---
+        N_total = N_uav + N_gu + N_map
+        position_ids = torch.arange(N_total, device=uav_tokens.device).unsqueeze(0)  # [1, N_total]
+        pos_encoding = self.positional_encoding[position_ids]  # [1, N_total, D]
+        
+        encoder_input = torch.cat([uav_tokens, gu_tokens, map_tokens], dim=1) + type_tokens + pos_encoding # [B, N_total, D]
+
+        # --- Mask setup
+        # transformer vuole True = ignora, False = usa
+        # --- Encoder padding mask ---
+        if uav_mask is not None:
+            enc_uav_mask = ~uav_mask  # [B, U]
+        else:
+            enc_uav_mask = torch.zeros(B, U, dtype=torch.bool, device=UAV_info.device)
+
+        if gu_mask is not None:
+            enc_gu_mask = ~gu_mask  # [B, G]
+        else:
+            enc_gu_mask = torch.zeros(B, G, dtype=torch.bool, device=GU_positions.device)
+
+        # La mappa in genere non ha padding: tutti i patch sono validi
+        B, N_map, _ = map_tokens.shape
+        enc_map_mask = torch.zeros(B, N_map, dtype=torch.bool, device=map_tokens.device)
+
+        # Concateniamo per formare la mask finale
+        src_key_padding_mask = torch.cat([enc_uav_mask, enc_gu_mask, enc_map_mask], dim=1)  # [B, N_total]
+        #src_key_padding_mask = ~gu_mask if gu_mask is not None else None  # (B, G)
         tgt_key_padding_mask = ~uav_mask if uav_mask is not None else None  # (B, U)
 
-        # Forward con maschere
-        tokens = self.transformer_encoder_decoder(
-            src=source,
-            tgt=target,
+        final_tokens = self.transformer_encoder_decoder(
+            src=encoder_input,
+            tgt=uav_tokens,
             src_key_padding_mask=src_key_padding_mask,
             tgt_key_padding_mask=tgt_key_padding_mask
         )
         
-        # Controllo NaN
-        if torch.isnan(tokens).any():
-            nan_mask = torch.isnan(tokens)
+        
+        if torch.isnan(final_tokens).any():
+            nan_mask = torch.isnan(final_tokens)
             nan_indices = torch.nonzero(nan_mask, as_tuple=False)
 
-            print("⚠️ Transformer output contains NaN at the following positions:")
+            print("⚠️ Transformer UAVxGU-MAP decoder output contains NaN at the following positions:")
             for idx in nan_indices:
                 print(f" -> index: {tuple(idx.tolist())}, value: NaN")
         
-        return self.layernorm_output(tokens)
+        return self.layernorm_output(final_tokens)
 
