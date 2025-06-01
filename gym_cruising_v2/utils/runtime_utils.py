@@ -47,11 +47,11 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--alg", type=str, default="PPO", nargs="?", const="PPO",
                         help="Algorithm to use: PPO, TD3")
-    parser.add_argument("--render-mode", type=str, default=None, 
+    parser.add_argument("--render-mode", type=str, default="human", 
                         help="Render mode (e.g., human or None")
-    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the training will be performed")
-    parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="If set, loads and runs a pre-trained model")
     parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="numerical test using trained model")
@@ -72,7 +72,7 @@ def parse_args():
                         help="the max number of UAVs in the environment")
     parser.add_argument("--uav-number", type=int, default=3,
                         help="the number of UAVs in the environment (not more than max-uav-number)")
-    parser.add_argument("--max-speed-uav", type=float, default=55.6,
+    parser.add_argument("--max-speed-uav", type=float, default=50.0,
                         help="maximum speed of a UAV in meters per second")
     parser.add_argument("--uav-altitude", type=float, default=500,
                     help="UAV flight altitude in meters")
@@ -88,9 +88,9 @@ def parse_args():
                         help="the number of starting ground units in the environment")
     parser.add_argument("--spawn-gu-prob", type=float, default=0.0005,
                         help="probability of spawning a ground unit per cell or timestep")
-    parser.add_argument("--gu-mean-speed", type=float, default=5.56,
+    parser.add_argument("--gu-mean-speed", type=float, default=5.00,
                         help="mean speed of ground units in meters per second")
-    parser.add_argument("--gu-standard-deviation", type=float, default=1.97,
+    parser.add_argument("--gu-standard-deviation", type=float, default=2.00,
                         help="standard deviation of ground unit speed in meters per second")
     parser.add_argument("--covered-threshold", type=float, default=10.0,
                         help="SINR threshold (in dB) above which a ground user is considered covered")
@@ -168,7 +168,7 @@ def parse_args():
                         help="Toggles whether or not to use a clipped loss for the value function")
     parser.add_argument("--ent-coef", type=float, default=0.001,
                         help="coefficient of the entropy")
-    parser.add_argument("--vf-coef", type=float, default=0.50,
+    parser.add_argument("--vf-coef", type=float, default=1.00,
                         help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5,
                         help="the maximum norm for the gradient clipping")

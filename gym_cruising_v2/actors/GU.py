@@ -16,8 +16,9 @@ class GU:
 
     def getImage(self):
         if self.covered:
-            return './gym_cruising_v2_v2/images/green30.png'
-        return './gym_cruising_v2_v2/images/white30.png'
+            return 'green30.png'
+        return 'white30.png'
+
 
     def setCovered(self, covered: bool):
         self.covered = covered

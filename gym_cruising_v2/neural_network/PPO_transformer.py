@@ -85,13 +85,8 @@ class PPOTransformer(nn.Module):
             self.type_embedding(type_gu),
             self.type_embedding(type_map)
         ], dim=1)  # [B, N_total, D]
-
-        # --- Positional encoding per l'encoder ---
-        N_total = N_uav + N_gu + N_map
-        position_ids = torch.arange(N_total, device=uav_tokens.device).unsqueeze(0)  # [1, N_total]
-        pos_encoding = self.positional_encoding[position_ids]  # [1, N_total, D]
         
-        encoder_input = torch.cat([uav_tokens, gu_tokens, map_tokens], dim=1) + type_tokens + pos_encoding # [B, N_total, D]
+        encoder_input = torch.cat([uav_tokens, gu_tokens, map_tokens], dim=1) + type_tokens # [B, N_total, D]
 
         # --- Mask setup
         # transformer vuole True = ignora, False = usa

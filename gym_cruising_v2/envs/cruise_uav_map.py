@@ -2,6 +2,7 @@
 import random
 from typing import Optional, Tuple
 import math
+import os
 
 import numpy as np
 import pygame
@@ -56,7 +57,7 @@ class CruiseUAVWithMap(Cruise):
 
         self.communication_channel = CommunicationChannel(args)
         
-
+        self.theoretical_max_distance_before_possible_collision = 2*math.sqrt(self.max_speed_uav**2 + self.max_speed_uav**2) + self.collision_distance
         self.reset_observation_action_space()
 
 
@@ -76,6 +77,11 @@ class CruiseUAVWithMap(Cruise):
             "uav_mask": spaces.Box(
                 low=0, high=1,
                 shape=(self.max_uav_number,),
+                dtype=bool
+            ),
+            "uav_flags": spaces.Box(
+                low=0, high=1,
+                shape=(self.max_uav_number, self.max_uav_number + 4),# True se uav rispettivo vicino + possibilità uscita dai bordi
                 dtype=bool
             ),
             "covered_users_states": spaces.Box(
@@ -247,6 +253,7 @@ class CruiseUAVWithMap(Cruise):
         # Inizializza lo stato degli UAV e la maschera di validità (padding)
         uav_states = np.zeros((self.max_uav_number, 4), dtype=np.float64)
         uav_mask = np.zeros(self.max_uav_number, dtype=bool)
+        uav_flags = np.zeros((self.max_uav_number, self.max_uav_number + 4), dtype=bool)
 
         # Popola uav_states con posizione e azione normalizzate per ogni UAV attivo
         for i in range(len(self.uav)):
@@ -254,6 +261,20 @@ class CruiseUAVWithMap(Cruise):
             act = self.normalizeActions(np.array([self.uav[i].last_shift_x, self.uav[i].last_shift_y]))  # azione normalizzata [dx, dy]
             uav_states[i] = np.concatenate([pos, act])  # concatena posizione e azione in vettore di dimensione 4
             uav_mask[i] = True  # marca UAV come attivo
+            
+            for j in range(len(self.uav)):
+                uav_distance = self.uav[i].position.calculate_distance_to_coordinate(self.uav[j].position)
+                if uav_distance <= self.theoretical_max_distance_before_possible_collision:
+                    uav_flags[i][j] = True
+                    
+            x, y = self.uav[i].position.x_coordinate, self.uav[i].position.y_coordinate
+            distances = np.array([x, self.grid.grid_width - x, y, self.grid.grid_height - y]) # Sinistra, Destra, Giu, Su
+            margin = self.max_speed_uav + 1
+            
+            for k, dist in enumerate(distances):
+                if dist < margin:
+                    uav_flags[i][self.max_uav_number + k] = True
+                    
 
         # Le posizioni da uav_number a max_uav_number rimangono a zero e sono indicate come inattive nella maschera (padding)
 
@@ -282,6 +303,7 @@ class CruiseUAVWithMap(Cruise):
             "map_exploration_states": map_exploration,
             "uav_states": uav_states,
             "uav_mask": uav_mask,
+            "uav_flags": uav_flags,
             "covered_users_states": covered_users_states,
             "gu_mask": gu_mask
         }
@@ -484,7 +506,7 @@ class CruiseUAVWithMap(Cruise):
 
         self.max_theoretical_ground_uavs_points_coverage = max_ground_coverage_points
         
-    def calculate_boundary_potential(self, uav):
+    def calculate_boundary_repulsive_potential(self, uav):
         """
         Calcola un potenziale artificiale (penalità) per scoraggiare gli UAV 
         dall'avvicinarsi troppo ai bordi della mappa.
@@ -505,7 +527,7 @@ class CruiseUAVWithMap(Cruise):
         distances = np.array([x, self.grid.grid_width - x, y, self.grid.grid_height - y])
         min_distance = np.min(distances)
         
-        if min_distance < self.max_speed_uav + 1:
+        if min_distance < margin:
             penalty += (margin - min_distance) / margin
            
         return penalty
@@ -529,7 +551,7 @@ class CruiseUAVWithMap(Cruise):
         penalty = 0
         uav_distance = uav_i.position.calculate_distance_to_coordinate(uav_j.position)
         
-        if uav_distance >= min_dist:
+        if uav_distance > min_dist:
             penalty = 0
         elif uav_distance <= self.collision_distance:
             penalty = 1.0  # Penalità massima
@@ -597,10 +619,11 @@ class CruiseUAVWithMap(Cruise):
         # 5. Penalità per avvicinamento ai bordi e agli altri uav
         boundary_penalty = 0.0
         collision_penalty = 0.0
-        for i in self.uav:
-            boundary_penalty += self.calculate_boundary_potential(i)
+        for i in range(len(self.uav)):
+            boundary_penalty += self.calculate_boundary_repulsive_potential(self.uav[i])
             for j in range(i + 1, len(self.uav)):
-                collision_penalty += self.calculate_uav_repulsive_potential(i, j, 10)
+                collision_penalty += self.calculate_uav_repulsive_potential(self.uav[i], self.uav[j], self.theoretical_max_distance_before_possible_collision)
+
                 
 
         global_reward -= w_boundary_penalty * boundary_penalty
@@ -612,18 +635,12 @@ class CruiseUAVWithMap(Cruise):
             
 
         '''  
-        # REWARD INDIVIDUALE
-        individual_rewards = []
-        for i in range(self.max_uav_number):
-            if terminated[i]:
-                individual_rewards.append(-2.0)
-            else:
-                contribution_score = contributions[i] / self.gu_covered if self.gu_covered > 0 else 0.0
-                reward = self.alpha * contribution_score + self.beta * global_reward
-                individual_rewards.append(reward)
-        ''' 
-
-        #self.log_rewards(contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score)
+        self.log_rewards(
+            contributions, entropy_contribution_score, spatial_coverage,
+            exploration_incentive, coverage_score,
+            boundary_penalty, collision_penalty, global_reward, terminated
+        )
+        '''
         return global_reward
     
     
@@ -709,6 +726,8 @@ class CruiseUAVWithMap(Cruise):
     
     # PYGAME METHODS
     def draw(self, canvas: Surface) -> None:
+        # Cartella delle immagini, relativa a questo file
+        image_dir = os.path.join(os.path.dirname(__file__), "..", "images")
         # CANVAS
         canvas.fill((255,255,255))
         
@@ -728,28 +747,31 @@ class CruiseUAVWithMap(Cruise):
                              self.wall_width)
         '''
 
-        # GU image
+        # Disegna i GU (Ground Units) con la loro immagine
         for gu in self.gu:
-            canvas.blit(pygame.image.load(gu.getImage()), self.image_convert_point(gu.position))
+            gu_image_path = os.path.join(image_dir, gu.getImage())
+            gu_image = pygame.image.load(gu_image_path)
+            canvas.blit(gu_image, self.image_convert_point(gu.position))
 
-        # UAV image
-        icon_drone = pygame.image.load('./gym_cruising_v2/images/drone30.png')
+        # Disegna i UAV (droni)
+        drone_image_path = os.path.join(image_dir, "drone30.png")
+        drone_image = pygame.image.load(drone_image_path)
         for uav in self.uav:
-            canvas.blit(icon_drone, self.image_convert_point(uav.position))
+            canvas.blit(drone_image, self.image_convert_point(uav.position))
 
-    def convert_point(self, point: Point) -> Tuple[int, int]:
-        pygame_x = (round(point.point_col * self.resolution)
+    def convert_point(self, point: Coordinate) -> Tuple[int, int]:
+        pygame_x = (round(point.x_coordinate)
                     + self.x_offset)
         pygame_y = (self.window_height
-                    - round(point.point_row * self.resolution)
+                    - round(point.y_coordinate)
                     + self.y_offset)
         return pygame_x, pygame_y
 
-    def image_convert_point(self, point: Point) -> Tuple[int, int]:
+    def image_convert_point(self, point: Coordinate) -> Tuple[int, int]:
         shiftX = 15
         shiftY = 15
-        pygame_x = (round(point.point_col * self.resolution) - shiftX + self.x_offset)
-        pygame_y = (self.window_height - round(point.point_row * self.resolution) - shiftY + self.y_offset)
+        pygame_x = (round(point.x_coordinate) - shiftX + self.x_offset)
+        pygame_y = (self.window_height - round(point.y_coordinate) - shiftY + self.y_offset)
         return pygame_x, pygame_y
 
     
@@ -770,20 +792,18 @@ class CruiseUAVWithMap(Cruise):
         return {"GU coperti": str(self.gu_covered), "Ground Users": str(
             len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area}
 
-    def log_rewards(self, contributions, entropy_contribution_score, spatial_coverage, exploration_incentive, coverage_score):
-        print("=== REWARD LOG ===")
-        
-        # Global reward components
-        print(f"Entropy contribution score   : {entropy_contribution_score:.4f}")
-        print(f"Spatial coverage             : {spatial_coverage:.4f}")
-        print(f"Exploration incentive        : {exploration_incentive:.4f}")
-        print(f"Coverage score               : {coverage_score:.4f}")
-        total_global_reward = entropy_contribution_score + spatial_coverage + exploration_incentive + coverage_score
-        print(f"Global reward (total)        : {total_global_reward:.4f}")
-        
-        # UAV contributions
-        print("UAV Contributions:")
-        for i, c in enumerate(contributions):
-            print(f"  UAV {i}: contribution = {c:.4f}")
-
-        print("===================")
+    def log_rewards(self, contributions, entropy_score, spatial_coverage, exploration_incentive,
+                coverage_score, boundary_penalty, collision_penalty, global_reward, terminated):
+        """
+        Logga i componenti del reward, includendo se almeno un UAV è terminato.
+        """
+        print("🔍 [Reward Breakdown]")
+        print(f"  ➤ UAV Contributions: {['{:.3f}'.format(c) for c in contributions]}")
+        print(f"  ➤ Entropy Score: {entropy_score:.3f}")
+        print(f"  ➤ Spatial Coverage: {spatial_coverage:.3f}")
+        print(f"  ➤ Exploration Incentive: {exploration_incentive:.3f}")
+        print(f"  ➤ GU Coverage Score: {coverage_score:.3f}")
+        print(f"  ➤ Boundary Penalty: -{boundary_penalty:.3f}")
+        print(f"  ➤ Collision Penalty: -{collision_penalty:.3f}")
+        print(f"  ✅ Total Global Reward: {global_reward:.3f}")
+        print(f"  ⚠️  Any UAV Terminated: {any(terminated)}")

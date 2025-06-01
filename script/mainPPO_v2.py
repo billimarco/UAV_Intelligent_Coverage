@@ -235,24 +235,7 @@ def test(agent, num_episodes=32, global_step=0):
             "test/std_rcr": std_rcr,
             "test/mean_steps": mean_steps,
         }, step=global_step)
-        
-    '''
-    if total_reward > BEST_VALIDATION:
-                BEST_VALIDATION = total_reward
-                # save the best validation nets
-                torch.save(transformer_policy.state_dict(), '../neural_network/rewardTransformer.pth')
-                torch.save(mlp_policy.state_dict(), '../neural_network/rewardMLP.pth')
-                torch.save(deep_Q_net_policy.state_dict(), '../neural_network/rewardDeepQ.pth')
 
-    if sum_last_rcr > MAX_LAST_RCR:
-        MAX_LAST_RCR = sum_last_rcr
-        # save the best validation nets
-        torch.save(transformer_policy.state_dict(), '../neural_network/maxTransformer.pth')
-        torch.save(mlp_policy.state_dict(), '../neural_network/maxMLP.pth')
-        torch.save(deep_Q_net_policy.state_dict(), '../neural_network/maxDeepQ.pth')
-    '''
-
-    return mean_reward, std_reward
     
 if __name__ == "__main__":
     args = utils.parse_args()
@@ -541,36 +524,44 @@ if __name__ == "__main__":
         torch.save(ppo_net.state_dict(), model_path)
     
     if args.use_trained:
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode=args.render_mode)
         # Load the trained model
         ppo_net = PPONet(embed_dim=args.embedded_dim).to(device)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         # Path al file dei pesi
-        model_path = os.path.join(project_root, "neural_network", "PPO.pth")
+        model_path = os.path.join(project_root, "neural_network", "PPO_new.pth")
         ppo_net.load_state_dict(torch.load(model_path))
+        ppo_net.eval()
         
-        options = ({
+        options = {
             "uav": 3,
-            "gu": 120,
-            "clustered": 1,  # 0 for uniform, 1 for clustered
-            "clusters_number": 3,
-            "variance": 100000
-        })
+            "gu": 90,
+            "clustered": False,
+            "clusters_number": 0,
+            "variance": 0
+        }
         
-        time = int(time.perf_counter())
-        print("Time: ", time)
-        np.random.seed(time)
-        state, info = env.reset(seed=time, options=options)
-        steps = 1
+        args.seed = 9
+        args.options = options
+        np.random.seed(args.seed)
+        env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
+
+        state, info = env.reset(seed=args.seed, options=options)
+        steps = 0
+        done = False
+        sum_episode_reward = 0
+        sum_rcr = 0
+        out_area = False
+        collision = False
 
         while True:
-            state = add_padding_state_uav(state, options["uav"])
-            uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
+            steps += 1
+            map_exploration, uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch(state)
             
             # Inference
             with torch.no_grad():
                 actions, _, _, _ = ppo_net(
+                    map_exploration,           # shape: (1, H, W)
                     uav_info,                  # shape: (1, UAV, 4)    
                     connected_gu_positions,    # shape: (1, GU, 2)
                     uav_mask,                  # shape: (1, UAV)
@@ -578,32 +569,30 @@ if __name__ == "__main__":
                 )
 
             # Rimuovi batch dim
-            actions = actions.squeeze(0)     # shape: (UAV, 2)
-            # Applica max speed scaling
-            scaled_actions = actions * args.max_speed_uav   # (UAV, 2)
-            real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
+            actions_np = actions.squeeze(0).cpu().numpy()
+            uav_mask_np = uav_mask.squeeze(0).cpu().numpy()
+            env_action = {
+                "uav_moves": actions_np,     # (max_uav, 2)
+                "uav_mask": uav_mask_np      # (max_uav)
+            }
+            
             # Passaggio ambiente
-            next_state, reward, terminated, truncated, info = env.step(real_actions.cpu().numpy())
-
-            if steps == 300:
+            next_state, reward, terminated, truncated, info = env.step(env_action)
+            if steps == 500:
                 truncated = True
-            done = truncated or info['Collision']
-
-            # if steps % 70 == 0 and steps != 0:
-            #     state = env.reset_gu(options=options)
-
+            done = terminated or truncated
+            sum_episode_reward += reward
+            sum_rcr += float(info['RCR'])
             state = next_state
-            steps += 1
-
             if done:
-                last_RCR = float(info['RCR'])
+                out_area = info["Out_Area"]
+                collision = info["Collision"]
                 break
 
         env.close()
-        print("Last RCR: ", last_RCR)
+        print(f"Trained Net Episode: uav_number = {options['uav']}, starting_gu = {options['gu']}, steps = {steps}, total_reward = {sum_episode_reward:.2f}, RCR = {sum_rcr / steps:.2f}, out_area = {out_area}, collision = {collision}")
     
     if args.numerical_test:
-        env = gym.make('gym_cruising:Cruising-v0', args=args, render_mode=args.render_mode)
         # Load the trained model
         ppo_net = PPONet(embed_dim=args.embedded_dim).to(device)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
@@ -611,69 +600,6 @@ if __name__ == "__main__":
         # Path al file dei pesi
         model_path = os.path.join(project_root, "neural_network", "PPO.pth")
         ppo_net.load_state_dict(torch.load(model_path))
-        
-        options = ({
-            "uav": 3,
-            "gu": 120,
-            "clustered": 1,  # 0 for uniform, 1 for clustered
-            "clusters_number": 3,
-            "variance": 100000
-        })
-        seeds = [5522, 6004, 9648, 8707, 5930, 7411, 8761, 6748, 283, 4880, 7541, 2423, 9652, 4469, 3508, 8969, 8222, 6413,
-                3133, 273, 1431, 9688, 6940, 9998, 7097, 1130, 7583, 4018, 116, 1626, 9579, 2641, 8602, 3335, 7980, 3434,
-                1553, 4961, 2024, 2834, 6610, 979, 9405, 4866, 7437, 3827, 3735, 2038, 1360, 5202, 4870, 1945, 382, 7101,
-                2402, 7235, 8967, 2315, 5955, 4300, 1775, 8136, 1050, 6385, 1068, 5451, 9772, 2331, 6174, 4393, 4873, 7296,
-                1780, 5299, 4919, 625, 87, 2240, 2815, 5020, 43, 211, 17, 1243, 97, 23, 57, 1111, 2013, 571, 1729,
-                333, 907, 1025, 621162, 513527, 268574, 233097, 342217, 310673]
-        
-        tot_rewards = []
-        collisions = 0
-        for j, seed in enumerate(seeds):
-            print("Test ", str(j))
-            np.random.seed(seed)
-            state, info = env.reset(seed=seed, options=options)
-            steps = 1
-            while True:
-                state = add_padding_state_uav(state, options["uav"])
-                uav_info, connected_gu_positions, uav_mask, gu_mask = process_state_batch([state])
-                
-                # Inference
-                with torch.no_grad():
-                    actions, _, _, _ = ppo_net(
-                        uav_info,                  # shape: (1, UAV, 4)    
-                        connected_gu_positions,    # shape: (1, GU, 2)
-                        uav_mask,                  # shape: (1, UAV)
-                        gu_mask                    # shape: (1, GU)
-                    )
-
-                # Rimuovi batch dim
-                actions = actions.squeeze(0)     # shape: (UAV, 2)
-                # Applica max speed scaling
-                scaled_actions = actions * args.max_speed_uav   # (UAV, 2)
-                real_actions = scaled_actions[uav_mask.squeeze(0)]  # (U_real, 2)
-                # Passaggio ambiente
-                next_state, reward, terminated, truncated, info = env.step(real_actions.cpu().numpy())
-
-                if steps == 300:
-                    truncated = True
-                done = truncated or info['Collision']
-
-                # if steps % 70 == 0 and steps != 0:
-                #     state = env.reset_gu(options=options)
-
-                state = next_state
-                steps += 1
-                if done:
-                    tot_rewards.append(float(info['RCR']))
-                    if info['Collision']:
-                        collisions += 1
-                    break
-                
-            env.close()
-            
-        print("Mean reward: ", sum(tot_rewards) / len(tot_rewards))
-        print("Collisioni: ", collisions)
-        
 
         # Test the trained model
-        #test(agent, test_envs, tasks, global_step, True, True)
+        test(ppo_net, 256, 0)
