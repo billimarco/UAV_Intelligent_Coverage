@@ -4,7 +4,6 @@ from gym_cruising_v2.neural_network.PPO_try import PPOTry
 from gym_cruising_v2.neural_network.PPO_transformer import PPOTransformer
 from gym_cruising_v2.neural_network.PPO_actor_net import ActorHead
 from gym_cruising_v2.neural_network.PPO_critic_net import CriticHead
-from torch_geometric.nn import GCNConv
 from torch.distributions import Normal
 
 class PPONet(nn.Module):
