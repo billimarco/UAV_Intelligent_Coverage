@@ -7,10 +7,10 @@ from gym_cruising_v2.neural_network.PPO_critic_net import CriticHead
 from torch.distributions import Normal
 
 class PPONet(nn.Module):
-    def __init__(self, embed_dim=16):
+    def __init__(self, embed_dim=16, max_uav_number = 3, max_gu_number = 120):
         super().__init__()
         
-        self.backbone = PPOTransformer(embed_dim)
+        self.backbone = PPOTransformer(embed_dim, max_uav_number)
         #self.backbone = PPOTry(embed_dim)  # Backbone per l'estrazione delle caratteristiche
         
         # Actor: Politica (output probabilità di azioni)
@@ -19,7 +19,7 @@ class PPONet(nn.Module):
         # Critic: Funzione di valore
         self.critic_head = CriticHead(embed_dim)
 
-    def forward(self, map_exploration, uav_input, gu_input, uav_mask=None, gu_mask=None, actions=None):
+    def forward(self, map_exploration, uav_input, gu_input, uav_flags, uav_mask=None, gu_mask=None, actions=None):
         """
         Args:
             uav_input (Tensor): (B, U, uav_dim) - Caratteristiche degli UAV.
@@ -33,7 +33,7 @@ class PPONet(nn.Module):
         
         # Gestione del caso in cui non ci sono GUs (gu_input vuoto)
         #uav_tokens = self.backbone(uav_input, gu_input, uav_mask, gu_mask) 
-        uav_tokens = self.backbone(map_exploration, uav_input, gu_input, uav_mask, gu_mask)  # (B, U, D)
+        uav_tokens = self.backbone(map_exploration, uav_input, gu_input, uav_flags, uav_mask, gu_mask)  # (B, U, D)
             
         mean, std = self.actor_head(uav_tokens, uav_mask)  # (B, U, 2)
 

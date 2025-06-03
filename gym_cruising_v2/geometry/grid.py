@@ -20,7 +20,7 @@ class Grid:
         resolution (int): Numero di punti per pixel in entrambe le direzioni.
         grid_width (int): Numero di point in larghezza.
         grid_height (int): Numero di point in altezza.
-        spawn_offset (int): Offset per la zona di spawn in unità di pixel.
+        spawn_offset (int): Offset per la zona di spawn in unità di point.
         pixel_grid (List[List[Pixel]]): Griglia 2D di oggetti Pixel indicizzati come pixel_grid[riga][colonna].
         point_grid (List[List[Point]]): Griglia 2D di oggetti Point indicizzati come point_grid[riga][colonna].
         walls (Tuple[Line, ...]): Tuple di linee che rappresentano i muri (non implementata).
@@ -49,7 +49,7 @@ class Grid:
             window_width (int): Numero di pixel in larghezza.
             window_height (int): Numero di pixel in altezza.
             resolution (int): Numero di punti per pixel (griglia interna).
-            spawn_offset (int): Offset per la zona di spawn, in pixel.
+            spawn_offset (int): Offset per la zona di spawn, in point.
             unexplored_point_max_steps (int): Valore massimo di passi per punti inesplorati.
             render_mode (str): modalità di rendering: se None non costruisce la griglia di Pixel
         """
@@ -82,11 +82,10 @@ class Grid:
                     row_pixels.append(pixel)
                 self.pixel_grid.append(row_pixels)
 
-        # Zona di spawn: angolo in basso a sinistra, con offset (in punti)
-        spawn_offset_res = spawn_offset * resolution
+        # Zona di spawn: angolo in basso a sinistra, con offset (in punti) 
         self.spawn_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (
-            ((spawn_offset_res, self.grid_width  - spawn_offset_res),
-             (spawn_offset_res, self.grid_height - spawn_offset_res)),
+            ((spawn_offset, self.grid_width  - spawn_offset),
+             (spawn_offset, self.grid_height - spawn_offset)),
         )
         
         self.available_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (

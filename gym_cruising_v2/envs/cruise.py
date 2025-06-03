@@ -91,6 +91,7 @@ class Cruise(Env):
         state["covered_users_states"] = np.clip(state["covered_users_states"], -1.0, 1.0)
         state["uav_mask"] = state["uav_mask"].astype(bool)
         state["gu_mask"] = state["gu_mask"].astype(bool)
+        state["uav_flags"] = state["uav_flags"].astype(bool)
         
         '''
         # Controllo dettagliato per ciascun componente
@@ -116,11 +117,14 @@ class Cruise(Env):
         truncated = self.check_if_truncated()
         info = self.create_info(terminated)
         reward = self.calculate_reward(terminated)
+        
+        info["terminated_per_uav"] = np.asarray(terminated, dtype=bool)
+        info["reward_per_uav"] = np.asarray(reward, dtype=np.float32)
 
         if self.render_mode == "human":
             self.render_frame()
 
-        return state, reward, any(terminated), truncated, info
+        return state, float(np.mean(reward)), False, truncated, info #impedisce all'ambiente di terminare anche se fa degli errori. Mi serve per impedire il crash dell'AsyncVectorEnv
     
     def render(self):
         return None

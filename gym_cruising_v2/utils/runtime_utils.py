@@ -12,6 +12,10 @@ def get_most_free_gpu():
         output = subprocess.check_output("nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits", shell=True)
         free_memory = [int(x) for x in output.decode("utf-8").strip().split("\n")]
         
+        print(torch.cuda.device_count())  # quante GPU vede PyTorch
+        for i in range(torch.cuda.device_count()):
+            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+    
         # Find the index of the GPU with the highest free memory
         best_gpu = free_memory.index(max(free_memory))
         return best_gpu, free_memory[best_gpu]
@@ -47,9 +51,9 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--alg", type=str, default="PPO", nargs="?", const="PPO",
                         help="Algorithm to use: PPO, TD3")
-    parser.add_argument("--render-mode", type=str, default="human", 
+    parser.add_argument("--render-mode", type=str, default=None, 
                         help="Render mode (e.g., human or None")
-    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the training will be performed")
     parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="If set, loads and runs a pre-trained model")
@@ -58,7 +62,7 @@ def parse_args():
     
     
     # NN specific arguments
-    parser.add_argument("--embedded-dim", type=int, default=32,
+    parser.add_argument("--embedded-dim", type=int, default=64,
                     help="Size of the embedding vector used to represent agent observations or features")
     
     # Reward specific arguments
@@ -100,10 +104,10 @@ def parse_args():
                         help="the width size of the PyGame window")
     parser.add_argument("--window-height", type=int, default=500,
                         help="the height size of the PyGame window")
-    parser.add_argument("--spawn-offset" , type=int, default=15,
-                        help="the spawn offset of the environment")
     parser.add_argument("--resolution", type=int, default=1,
                     help="meters for every pixel side (num of points for pixel side)")
+    parser.add_argument("--spawn-offset" , type=int, default=55,
+                        help="the spawn offset of the environment in point")
     parser.add_argument("--x-offset", type=float, default=0,
                         help="the x offset of the environment")
     parser.add_argument("--y-offset", type=float, default=0,
