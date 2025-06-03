@@ -485,6 +485,7 @@ class CruiseUAVWithMap(Cruise):
                 if count > 1:
                     simultaneous_coverage += 1
             else:
+                point.set_covered(False)
                 point.increment_step_from_last_visit()
 
         # Salva le statistiche calcolate
@@ -607,7 +608,7 @@ class CruiseUAVWithMap(Cruise):
         
         # 2. Copertura spaziale (evita UAV sovrapposti) - volendo potrebbe essere reward individuale se altezze uav fossero diverse
         if self.max_theoretical_ground_uavs_points_coverage > 0:
-            spatial_coverage = 1 - (self.simultaneous_uavs_points_coverage * self.uav_number / self.max_theoretical_ground_uavs_points_coverage)
+            spatial_coverage = 1 - (self.simultaneous_uavs_points_coverage * num_uav / self.max_theoretical_ground_uavs_points_coverage)
         else:
             spatial_coverage = 0.0
             
@@ -622,7 +623,7 @@ class CruiseUAVWithMap(Cruise):
         
         # 4. Copertura dei GU massima
         if exploration_incentive >= exploration_threshold:
-            coverage_score = self.gu_covered / self.max_gu_number if self.max_gu_number > 0 else 0.0
+            coverage_score = self.gu_covered / num_uav if num_uav > 0 else 0.0
         else:
             coverage_score = 0.0  # ignoriamo copertura se la mappa è troppo inesplorata
         global_coverage = w_coverage * coverage_score * (exploration_incentive - exploration_threshold) / (1 - exploration_threshold)

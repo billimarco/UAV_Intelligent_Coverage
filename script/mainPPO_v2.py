@@ -156,6 +156,8 @@ def get_set_up():
     return options
 
 def test(agent, num_episodes=32, global_step=0):
+    args.seed = int(time.perf_counter())
+    args.options = get_set_up()
     env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
     agent.eval()
     total_rewards = []
@@ -561,8 +563,6 @@ if __name__ == "__main__":
         # Path al file dei pesi
         model_path = os.path.join(project_root, "neural_network", "PPO_new.pth")
         ppo_net.load_state_dict(torch.load(model_path, map_location='cuda:0'))
-
-        env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
 
         test(ppo_net, 1, 0)
         

@@ -55,7 +55,7 @@ def parse_args():
                         help="Render mode (e.g., human or None")
     parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the training will be performed")
-    parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="If set, loads and runs a pre-trained model")
     parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="numerical test using trained model")
