@@ -148,7 +148,7 @@ def get_set_up():
     ''' 
     options = {
         "uav": 3,
-        "gu": 90,
+        "gu": 100,
         "clustered": False,
         "clusters_number": 0,
         "variance": 0
@@ -167,7 +167,7 @@ def test(agent, num_episodes=32, global_step=0):
     for ep in range(num_episodes):
         options = {
             "uav": 3,
-            "gu": 90,
+            "gu": 100,
             "clustered": False,
             "clusters_number": 0,
             "variance": 0
@@ -209,7 +209,7 @@ def test(agent, num_episodes=32, global_step=0):
             # Estrapolo reward e terminated per UAV da info
             rewards = np.array(info.get("reward_per_uav", [reward]))    # fallback a reward singolo
             terminated = np.array(info.get("terminated_per_uav", [terminated]))
-            if steps == 250:
+            if steps == 500:
                 truncated = True
             done = np.any(terminated) or truncated
             sum_episode_reward += rewards
@@ -340,7 +340,7 @@ if __name__ == "__main__":
                 print("\n<------------------------->")
                 print(f"Testing at update {update}")
                 test_time = time.time()
-                test(agent=ppo_net, num_episodes=32, global_step=global_step)
+                test(agent=ppo_net, num_episodes=10, global_step=global_step)
                 torch.save(ppo_net.state_dict(), model_path_test)
                 print(f"Tested! Time elaplesed {time.time() - test_time}")
                 print("<------------------------->\n")
@@ -551,7 +551,7 @@ if __name__ == "__main__":
             print(f"PPO update time: {ppo_end_time - ppo_start_time:.2f} seconds")
             torch.cuda.empty_cache()
             
-        test(agent=ppo_net, num_episodes=32, global_step=global_step)
+        test(agent=ppo_net, num_episodes=10, global_step=global_step)
         
         torch.save(ppo_net.state_dict(), model_path)
     

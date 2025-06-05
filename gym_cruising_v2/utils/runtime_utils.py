@@ -88,7 +88,7 @@ def parse_args():
     # GU specific arguments
     parser.add_argument("--max-gu-number", type=int, default=120,
                         help="the max number of GUs in the environment")
-    parser.add_argument("--starting-gu-number", type=int, default=90,
+    parser.add_argument("--starting-gu-number", type=int, default=100,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--spawn-gu-prob", type=float, default=0.0005,
                         help="probability of spawning a ground unit per cell or timestep")
@@ -172,7 +172,7 @@ def parse_args():
                         help="Toggles whether or not to use a clipped loss for the value function")
     parser.add_argument("--ent-coef", type=float, default=0.001,
                         help="coefficient of the entropy")
-    parser.add_argument("--vf-coef", type=float, default=1.00,
+    parser.add_argument("--vf-coef", type=float, default=0.50,
                         help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5,
                         help="the maximum norm for the gradient clipping")
