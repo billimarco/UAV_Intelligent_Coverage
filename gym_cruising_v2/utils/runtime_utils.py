@@ -80,7 +80,7 @@ def parse_args():
                         help="maximum speed of a UAV in meters per second")
     parser.add_argument("--uav-altitude", type=float, default=500,
                     help="UAV flight altitude in meters")
-    parser.add_argument("--minimum-starting-distance-between-uav", type=float, default=50.0,
+    parser.add_argument("--minimum-starting-distance-between-uav", type=float, default=110.0,
                     help="minimum initial distance between UAVs in meters")
     parser.add_argument("--collision-distance", type=float, default=5.0,
                         help="minimum distance between UAVs before a collision is considered (in meters)")
@@ -150,7 +150,7 @@ def parse_args():
                         help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128,
                         help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--updates-per-env", type=int, default=500,
+    parser.add_argument("--updates-per-env", type=int, default=1000,
                         help="the number of steps to run in each environment")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Use GAE for advantage computation")

@@ -76,31 +76,33 @@ class PPOTransformer(nn.Module):
         # --- Type encoding per l'encoder ---
         B, N_gu, D = gu_tokens.shape
         B, N_map, D = map_tokens.shape
+        B, N_uav, D = uav_tokens.shape
 
-        type_gu = torch.full((B, N_gu), 0, dtype=torch.long, device=gu_tokens.device)     # GU = 0
-        type_map = torch.full((B, N_map), 1, dtype=torch.long, device=map_tokens.device)  # MAP = 1
+        type_gu = torch.full((B, N_gu), 0, dtype=torch.long, device=gu_tokens.device)    # GU = 0
+        type_map = torch.full((B, N_map), 1, dtype=torch.long, device=map_tokens.device) # MAP = 1
+        type_uav = torch.full((B, N_uav), 2, dtype=torch.long, device=uav_tokens.device) # UAV = 2
 
+        # --- Concatenate encoder input ---
+        encoder_input = torch.cat([gu_tokens, map_tokens, uav_tokens], dim=1)            # [B, G+M+U, D]
         type_tokens = torch.cat([
             self.type_embedding(type_gu),
-            self.type_embedding(type_map)
-        ], dim=1)  # [B, N_total, D]
-        
-        encoder_input = torch.cat([gu_tokens, map_tokens], dim=1) + type_tokens # [B, N_total, D]
+            self.type_embedding(type_map),
+            self.type_embedding(type_uav)
+        ], dim=1)                                                                         # [B, G+M+U, D]
+        encoder_input += type_tokens
 
         # --- Mask setup
         # transformer vuole True = ignora, False = usa
         # --- Encoder padding mask ---
         if gu_mask is not None:
-            enc_gu_mask = ~gu_mask  # [B, G]
+            enc_gu_mask = ~gu_mask                         # [B, G]
         else:
             enc_gu_mask = torch.zeros(B, G, dtype=torch.bool, device=GU_positions.device)
-
-        # La mappa in genere non ha padding: tutti i patch sono validi
-        B, N_map, _ = map_tokens.shape
         enc_map_mask = torch.zeros(B, N_map, dtype=torch.bool, device=map_tokens.device)
+        enc_uav_mask = ~uav_mask if uav_mask is not None else torch.zeros(B, N_uav, dtype=torch.bool, device=uav_tokens.device)
 
         # Concateniamo per formare la mask finale
-        src_key_padding_mask = torch.cat([enc_gu_mask, enc_map_mask], dim=1)  # [B, N_total]
+        src_key_padding_mask = torch.cat([enc_gu_mask, enc_map_mask, enc_uav_mask], dim=1)  # [B, total_enc_tokens]
         #src_key_padding_mask = ~gu_mask if gu_mask is not None else None  # (B, G)
         tgt_key_padding_mask = ~uav_mask if uav_mask is not None else None  # (B, U)
 

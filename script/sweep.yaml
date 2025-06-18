@@ -1,0 +1,40 @@
+project: Tesi
+entity: marcolbilli-universit-di-firenze
+program: mainPPO_v2.py
+
+method: bayes
+
+metric:
+  name: test/mean_reward
+  goal: maximize
+
+parameters:
+  updates-per-env:
+    values: [100]    # fisso a 100
+
+  update-epochs:
+    values: [2, 4, 6]
+
+  max-grad-norm:
+    values: [0.5, 1.0, 5.0]
+
+  learning-rate:
+    values: [0.00005, 0.0001, 0.0002, 0.0005, 0.001]
+
+  embedded-dim:
+    values: [64]
+
+  num-steps:
+    values: [128]
+
+  clip-coef:
+    values: [0.1, 0.2, 0.3]
+
+  num-envs:
+    values: [16]
+
+  ent-coef:
+    values: [0.00005, 0.0001, 0.0005, 0.001]
+
+  vf-coef:
+    values: [0.5, 1.0, 5.0]
