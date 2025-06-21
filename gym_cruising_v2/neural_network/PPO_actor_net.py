@@ -10,8 +10,9 @@ class ActorHead(nn.Module):
         super(ActorHead, self).__init__()
         self.fl1 = nn.Linear(token_dim, hidden_sizes[0])
         self.fl2 = nn.Linear(hidden_sizes[0], hidden_sizes[1])
-        self.fl3 = nn.Linear(hidden_sizes[1], 2)
-        self.log_std = nn.Parameter(torch.zeros(2))  # Deviazione standard appresa (globale)
+        self.fl3_mean = nn.Linear(hidden_sizes[1], 2)
+        self.fl3_logstd = nn.Linear(hidden_sizes[1], 2)
+
 
     def forward(self, token, uav_mask):
         """
@@ -31,9 +32,10 @@ class ActorHead(nn.Module):
         x = F.relu(self.fl1(valid_tokens))
         x = F.relu(self.fl2(x))
         
-        mean_valid = self.fl3(x)
-        log_std_clipped = torch.clamp(self.log_std, min=-20, max=2)
-        std_valid = torch.exp(log_std_clipped).expand_as(mean_valid)
+        mean_valid = self.fl3_mean(x)
+        log_std_valid = self.fl3_logstd(x).clamp(-20, 2)
+        std_valid = torch.exp(log_std_valid)
+
 
 
         # Inizializza i tensori di output

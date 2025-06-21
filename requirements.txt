@@ -5,3 +5,4 @@ torch
 wandb
 torchvision
 tensorboard
+matplotlib

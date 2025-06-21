@@ -2,9 +2,9 @@ import torch.nn as nn
 import torch
 
 
-class PPOTransformer(nn.Module):
+class MAT(nn.Module):
     def __init__(self, embed_dim=16, max_uav_number=3, img_size=(500, 500), patch_size=50):
-        super(PPOTransformer, self).__init__()
+        super(MAT, self).__init__()
 
         self.img_size = img_size
         self.patch_size = patch_size

@@ -86,14 +86,13 @@ class Cruise(Env):
 
         state = self.get_observation()
         
+        '''
         state["map_exploration_states"] = np.clip(state["map_exploration_states"], 0.0, 1.0)
         state["uav_states"] = np.clip(state["uav_states"], -1.0, 1.0)
         state["covered_users_states"] = np.clip(state["covered_users_states"], -1.0, 1.0)
         state["uav_mask"] = state["uav_mask"].astype(bool)
         state["gu_mask"] = state["gu_mask"].astype(bool)
         state["uav_flags"] = state["uav_flags"].astype(bool)
-        
-        '''
         # Controllo dettagliato per ciascun componente
         for key, value in state.items():
             space = self.observation_space.spaces[key]

@@ -147,11 +147,12 @@ def get_set_up():
         options = get_uniform_options()
     ''' 
     options = {
-        "uav": 3,
-        "gu": 100,
-        "clustered": False,
-        "clusters_number": 0,
-        "variance": 0
+        "uav": args.max_uav_number,
+        "gu": args.starting_gu_number,
+        "clustered": args.clustered,
+        "clusters_number": args.clusters_number,
+        "variance": args.clusters_variance_min,
+        "test": False
     }
     return options
 
@@ -166,11 +167,12 @@ def test(agent, num_episodes=32, global_step=0):
     
     for ep in range(num_episodes):
         options = {
-            "uav": 3,
-            "gu": 100,
-            "clustered": False,
-            "clusters_number": 0,
-            "variance": 0
+            "uav": args.max_uav_number,
+            "gu": args.starting_gu_number,
+            "clustered": args.clustered,
+            "clusters_number": args.clusters_number,
+            "variance": args.clusters_variance_min,
+            "test": True
         }
         np.random.seed(ep)
         state, info = env.reset(seed=ep, options=options)
@@ -178,6 +180,8 @@ def test(agent, num_episodes=32, global_step=0):
         steps = 0
         sum_episode_reward = np.zeros(args.max_uav_number)
         sum_rcr = 0
+        sum_out_area = 0
+        sum_collision = 0
         out_area = False
         collision = False
 
@@ -211,13 +215,20 @@ def test(agent, num_episodes=32, global_step=0):
             terminated = np.array(info.get("terminated_per_uav", [terminated]))
             if steps == 500:
                 truncated = True
-            done = np.any(terminated) or truncated
+            if np.any(terminated):
+                if info["Out_Area"]:
+                    sum_out_area += 1
+                if info["Collision"]:
+                    sum_collision += 1
+            done = truncated
             sum_episode_reward += rewards
             sum_rcr += float(info['RCR'])
             state = next_state
             if done:
+                '''
                 out_area = info["Out_Area"]
                 collision = info["Collision"]
+                '''
                 break
         
         episode_reward = np.sum(sum_episode_reward[uav_mask_np])  # Totale reward per UAV attivi
@@ -226,7 +237,7 @@ def test(agent, num_episodes=32, global_step=0):
         steps_vec.append(steps)
         rcr_values.append(avg_rcr)  # Media di RCR per episodio
         total_rewards.append(episode_reward)
-        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_area = {out_area}, collision = {collision}")
+        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_areas = {sum_out_area}, collisions = {sum_collision}")
 
     # Statistiche
     mean_steps = np.mean(steps_vec)
@@ -268,7 +279,7 @@ if __name__ == "__main__":
     best_gpu, free_mem = utils.get_most_free_gpu()
     if best_gpu is not None and args.cuda:
         print(f"Using GPU {best_gpu} with {free_mem} MB free.")
-        device = torch.device(f"cuda:{best_gpu}")
+        device = torch.device(f"cuda:1")
     else:
         print("No GPU available, using CPU.")
         device = torch.device("cpu")

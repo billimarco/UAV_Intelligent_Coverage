@@ -1,5 +1,6 @@
 from typing import Tuple
 from typing import List
+import matplotlib.pyplot as plt
 
 import numpy as np
 import math
@@ -225,5 +226,22 @@ class Grid:
             for col in range(self.grid_width):
                 exploration_map[row, col] = self.point_grid[row][col].step_from_last_visit
         return exploration_map
+    
+    def save_point_exploration_image(self, path: str):
+        """
+        Salva un'immagine (heatmap) della point grid in base ai valori di esplorazione.
+
+        Args:
+            path (str): Path del file in cui salvare l'immagine (es. "map.png").
+        """
+        exploration_map = self.get_point_exploration_map()
+
+        plt.figure(figsize=(10, 10))
+        plt.imshow(exploration_map, cmap='viridis', origin='lower')
+        plt.colorbar(label="Steps from last visit")
+        plt.title("Point Grid Exploration")
+        plt.tight_layout()
+        plt.savefig(path)
+        plt.close()
 
                     
