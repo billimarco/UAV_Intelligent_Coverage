@@ -33,6 +33,10 @@ class CruiseUAVWithMap(Cruise):
     gu_covered = 0
     max_gu_covered = 0
     max_theoretical_ground_uavs_points_coverage = 0
+    
+    boundary_penalty_total = 0.0
+    spatial_coverage_total = 0.0
+    
     #total_uavs_point_coverage = 0
     #simultaneous_uavs_points_coverage = 0
     uav_total_covered_points = []
@@ -564,7 +568,7 @@ class CruiseUAVWithMap(Cruise):
         Returns:
             float: penalità tra 0 (nessun conflitto) e 1.0 (collisione imminente).
         """
-        penalty = -1
+        penalty = 0
         uav_distance = uav_i.position.calculate_distance_to_coordinate(uav_j.position)
         h_i = uav_i.position.z_coordinate
         h_j = uav_j.position.z_coordinate
@@ -576,7 +580,7 @@ class CruiseUAVWithMap(Cruise):
         min_dist = margin_i + margin_j # or self.theoretical_max_distance_before_possible_collision
         
         if uav_distance > min_dist:
-            penalty = 0
+            penalty = -1.0
         elif uav_distance <= self.collision_distance:
             penalty = 1.0  # Penalità massima
         else:
@@ -593,17 +597,18 @@ class CruiseUAVWithMap(Cruise):
     def calculate_reward(self, terminated):
         w_boundary_penalty = 1.0
         w_collision_penalty = 0.0
-        w_spatial = 0.0
+        w_spatial = 1.0
         w_explore = 0.0
         w_coverage = 0.0
         
         num_uav = len(self.uav)
         individual_rewards = [0.0 for _ in range(self.max_uav_number)]
-        
-        
+
         # 1. Penalità per avvicinamento ai bordi e agli altri uav
+        self.boundary_penalty_total = 0
         for i in range(num_uav):
             boundary_penalty = self.calculate_boundary_repulsive_potential(self.uav[i])
+            self.boundary_penalty_total -= w_boundary_penalty * boundary_penalty
             #afar_boundary_incentive = 1.0 - boundary_penalty
             individual_rewards[i] -= w_boundary_penalty * boundary_penalty
 
@@ -613,18 +618,17 @@ class CruiseUAVWithMap(Cruise):
                 #afar_collision_incentive = 1.0 - collision_penalty
                 individual_rewards[i] -= w_collision_penalty * collision_penalty
                 individual_rewards[j] -= w_collision_penalty * collision_penalty
-            
-            individual_rewards[i] = individual_rewards[i] / num_uav if individual_rewards[i] >= 0 else 0.0
+        
+        
 
         # 2. Copertura spaziale (evita UAV sovrapposti) - volendo potrebbe essere reward individuale se altezze uav fossero diverse
-        spatial_coverage_total = 0
+        self.spatial_coverage_total = 0
         if self.max_theoretical_ground_uavs_points_coverage > 0 and w_spatial > 0.0:
             for i in range(num_uav):
                 uav_coverage = (self.uav_total_covered_points[i] - self.uav_shared_covered_points[i]) / int(self.max_theoretical_ground_uavs_points_coverage / num_uav)
-                spatial_coverage_total += w_spatial * uav_coverage
+                self.spatial_coverage_total += w_spatial * uav_coverage
                 individual_rewards[i] += w_spatial * uav_coverage
- 
-        spatial_coverage = spatial_coverage_total / num_uav if num_uav > 0 else 0.0
+
             
         coverage_threshold = 0.95  # soglia di copertura spaziale per incentivare
         
@@ -826,6 +830,12 @@ class CruiseUAVWithMap(Cruise):
                 break
         
         RCR = str(self.gu_covered/len(self.gu))
+        
+        if self.options["test"]:
+            return {"GU coperti": str(self.gu_covered), "Ground Users": str(
+                len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area, 
+                "boundary_penalty_total": self.boundary_penalty_total, "spatial_coverage_total": self.spatial_coverage_total}
+            
         return {"GU coperti": str(self.gu_covered), "Ground Users": str(
             len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area}
 

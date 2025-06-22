@@ -1,13 +1,14 @@
 import sys
 import os
 import warnings
+import subprocess
+import argparse
 
 #warnings.filterwarnings("ignore", category=UserWarning, module="gymnasium.utils.passive_env_checker")
 os.environ.pop("CUDA_VISIBLE_DEVICES", None)  # rimuove se esiste
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import subprocess
-import argparse
+
 import torch.multiprocessing as mp
 from distutils.util import strtobool
 
@@ -164,6 +165,10 @@ def test(agent, num_episodes=32, global_step=0):
     total_rewards = []
     rcr_values = []
     steps_vec = []
+    out_area_vec = []
+    collision_vec = []
+    boundary_penalty_rewards = []
+    spatial_coverage_rewards = []
     
     for ep in range(num_episodes):
         options = {
@@ -179,6 +184,8 @@ def test(agent, num_episodes=32, global_step=0):
         done = False
         steps = 0
         sum_episode_reward = np.zeros(args.max_uav_number)
+        sum_boundary_penalty_total = 0
+        sum_spatial_coverage_total = 0
         sum_rcr = 0
         sum_out_area = 0
         sum_collision = 0
@@ -223,6 +230,8 @@ def test(agent, num_episodes=32, global_step=0):
             done = truncated
             sum_episode_reward += rewards
             sum_rcr += float(info['RCR'])
+            sum_boundary_penalty_total += info["boundary_penalty_total"]
+            sum_spatial_coverage_total += info["spatial_coverage_total"]
             state = next_state
             if done:
                 '''
@@ -233,11 +242,16 @@ def test(agent, num_episodes=32, global_step=0):
         
         episode_reward = np.sum(sum_episode_reward[uav_mask_np])  # Totale reward per UAV attivi
         avg_rcr = sum_rcr / steps
+        out_area_vec.append(sum_out_area)
+        collision_vec.append(sum_collision)
         # Aggiungi l'RCR medio per l'episodio
         steps_vec.append(steps)
         rcr_values.append(avg_rcr)  # Media di RCR per episodio
         total_rewards.append(episode_reward)
-        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_areas = {sum_out_area}, collisions = {sum_collision}")
+        boundary_penalty_rewards.append(sum_boundary_penalty_total)
+        spatial_coverage_rewards.append(sum_spatial_coverage_total)
+        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_areas = {sum_out_area}, collisions = {sum_collision},\n"
+              f"boundary_penalty_total = {sum_boundary_penalty_total:.2f}, spatial_coverage_total = {sum_spatial_coverage_total:.2f}\n")
 
     # Statistiche
     mean_steps = np.mean(steps_vec)
@@ -245,11 +259,19 @@ def test(agent, num_episodes=32, global_step=0):
     std_reward = np.std(total_rewards)
     mean_rcr = np.mean(rcr_values)
     std_rcr = np.std(rcr_values)
+    mean_out_area = np.mean(out_area_vec)
+    mean_collision = np.mean(collision_vec)
+    mean_boundary_penalty = np.mean(boundary_penalty_rewards)
+    mean_spatial_coverage = np.mean(spatial_coverage_rewards)
 
     print(f"\nTest completed over {num_episodes} episodes.")
     print(f"Average reward: {mean_reward:.2f} ± {std_reward:.2f}")
     print(f"Average RCR : {mean_rcr:.2f} ± {std_rcr:.2f}")
     print(f"Average Steps : {mean_steps:.2f}")
+    print(f"Average Out Area: {mean_out_area:.2f}")
+    print(f"Average Collisions: {mean_collision:.2f}")
+    print(f"Average Boundary Penalty: {mean_boundary_penalty:.2f}")
+    print(f"Average Spatial Coverage: {mean_spatial_coverage:.2f}")
 
     # Logging su Weights & Biases
     if wandb.run is not None:
@@ -259,6 +281,10 @@ def test(agent, num_episodes=32, global_step=0):
             "test/mean_rcr": mean_rcr,
             "test/std_rcr": std_rcr,
             "test/mean_steps": mean_steps,
+            "test/mean_out_area": mean_out_area,
+            "test/mean_collision": mean_collision,
+            "test/mean_boundary_penalty": mean_boundary_penalty,
+            "test/mean_spatial_coverage": mean_spatial_coverage,
         }, step=global_step)
 
     
@@ -276,12 +302,12 @@ if __name__ == "__main__":
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
     print(f"Available GPUs: {torch.cuda.device_count()}")
-    best_gpu, free_mem = utils.get_most_free_gpu()
-    if best_gpu is not None and args.cuda:
-        print(f"Using GPU {best_gpu} with {free_mem} MB free.")
-        device = torch.device(f"cuda:1")
+
+    if args.cuda:
+        print(f"Usando GPU {args.cuda_device}")
+        device = torch.device(f"cuda:{args.cuda_device}")
     else:
-        print("No GPU available, using CPU.")
+        print("Nessuna GPU scelta, uso CPU")
         device = torch.device("cpu")
     
     if args.train:
@@ -305,6 +331,10 @@ if __name__ == "__main__":
             wandb.define_metric("test/mean_rcr", step_metric="global_step")
             wandb.define_metric("test/std_rcr", step_metric="global_step")
             wandb.define_metric("test/mean_steps", step_metric="global_step")
+            wandb.define_metric("test/mean_out_area", step_metric="global_step")
+            wandb.define_metric("test/mean_collision", step_metric="global_step")
+            wandb.define_metric("test/mean_boundary_penalty", step_metric="global_step")
+            wandb.define_metric("test/mean_spatial_coverage", step_metric="global_step")
             wandb.define_metric("charts/learning_rate", step_metric="global_step")
             wandb.define_metric("losses/value_loss", step_metric="global_step")
             wandb.define_metric("losses/policy_loss", step_metric="global_step")
@@ -544,7 +574,7 @@ if __name__ == "__main__":
             print("Primi 10 valori di y_pred:", y_pred[:10])
             print("Differenze:", y_true[:10] - y_pred[:10])
             var_y = np.var(y_true)
-            explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+            explained_var = np.nan if var_y == 0 else 1 - (np.var(y_true - y_pred) / var_y)
             
             wandb.log({
                 "charts/learning_rate": optimizer.param_groups[0]["lr"],

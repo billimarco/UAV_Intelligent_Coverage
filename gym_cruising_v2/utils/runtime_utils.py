@@ -2,28 +2,6 @@ import os
 import subprocess
 import argparse
 from distutils.util import strtobool
-import torch
-
-def get_most_free_gpu():
-    """Finds the GPU with the most free memory using nvidia-smi."""
-    try:
-        torch.cuda.empty_cache()
-        # Run nvidia-smi to get free memory for each GPU
-        output = subprocess.check_output("nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits", shell=True)
-        free_memory = [int(x) for x in output.decode("utf-8").strip().split("\n")]
-        
-        print(torch.cuda.device_count())  # quante GPU vede PyTorch
-        for i in range(torch.cuda.device_count()):
-            print(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-    
-        # Find the index of the GPU with the highest free memory
-        best_gpu = free_memory.index(max(free_memory))
-        return best_gpu, free_memory[best_gpu]
-
-    except Exception as e:
-        print(f"Error detecting GPUs: {e}")
-        return None, None
-
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -39,6 +17,8 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
+    parser.add_argument("--cuda-device", type=int, default=0,
+                        help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
     parser.add_argument("--offline", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
@@ -66,9 +46,9 @@ def parse_args():
                     help="Size of the embedding vector used to represent agent observations or features")
 
     # UAV specific arguments
-    parser.add_argument("--max-uav-number", type=int, default=1,
+    parser.add_argument("--max-uav-number", type=int, default=3,
                         help="the max number of UAVs in the environment")
-    parser.add_argument("--uav-number", type=int, default=1,
+    parser.add_argument("--uav-number", type=int, default=3,
                         help="the number of UAVs in the environment (not more than max-uav-number)")
     parser.add_argument("--max-speed-uav", type=float, default=50.0,
                         help="maximum speed in a single direction of an UAV in meters per second")

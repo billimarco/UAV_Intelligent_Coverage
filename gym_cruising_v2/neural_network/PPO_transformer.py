@@ -99,14 +99,25 @@ class PPOTransformer(nn.Module):
         src_key_padding_mask = torch.cat([enc_map_mask, enc_gu_mask], dim=1)  # [B, total_enc_tokens]
         #src_key_padding_mask = ~gu_mask if gu_mask is not None else None  # (B, G)
         tgt_key_padding_mask = ~uav_mask if uav_mask is not None else None  # (B, U)
+        
+        '''
+        # MAT configuration
+        causal_mask = torch.triu(torch.ones(U, U, dtype=torch.bool, device=uav_tokens.device), diagonal=1)
 
+        final_tokens = self.transformer_encoder_decoder(
+            src=encoder_input,
+            tgt=uav_tokens,
+            src_key_padding_mask=src_key_padding_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask,
+            tgt_mask=causal_mask
+        )
+        '''
         final_tokens = self.transformer_encoder_decoder(
             src=encoder_input,
             tgt=uav_tokens,
             src_key_padding_mask=src_key_padding_mask,
             tgt_key_padding_mask=tgt_key_padding_mask
         )
-        
         
         if torch.isnan(final_tokens).any():
             nan_mask = torch.isnan(final_tokens)
