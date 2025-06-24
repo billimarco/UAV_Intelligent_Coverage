@@ -23,7 +23,7 @@ import torch.nn.functional as F
 import wandb
 
 from gymnasium.vector import SyncVectorEnv, AsyncVectorEnv
-from gym_cruising_v2.neural_network.PPO_net import PPONet
+from gym_cruising_v2.neural_network.PPO_net_ind import PPONet
 from gym_cruising_v2.utils.value_normalizer import ValueNormalizer
 import gym_cruising_v2.utils.runtime_utils as utils
 
@@ -46,39 +46,28 @@ def compute_gae(rewards, values, dones):
         advantages: (num_envs, num_steps, num_agents)
         returns: (num_envs, num_steps, num_agents)
     """
-    num_envs, num_steps, max_uav = rewards.shape
+    num_envs, num_steps, num_agents = rewards.shape
 
-    # Estendi values con bootstrap finale (valori a 0)
+    # Estendi values con uno step finale a 0
     values_ext = torch.cat([
-        values, 
-        torch.zeros((num_envs, 1, 1), dtype=values.dtype, device=values.device)  # Aggiungi una colonna finale di zeri
-    ], dim=1)  # → (num_envs, num_steps + 1, 1)
+        values,
+        torch.zeros((num_envs, 1, num_agents), dtype=values.dtype, device=values.device)
+    ], dim=1)  # → (num_envs, num_steps + 1, num_agents)
 
-    '''
-    dones_ext = torch.cat([
-        dones, 
-        torch.ones((num_envs, 1, 1), dtype=dones.dtype, device=dones.device)  # Done=True finale
-    ], dim=1)
-    '''
     advantages = torch.zeros_like(rewards)
-    gae = torch.zeros((num_envs, max_uav), dtype=rewards.dtype, device=rewards.device)
+    gae = torch.zeros((num_envs, num_agents), dtype=rewards.dtype, device=rewards.device)
 
     for t in reversed(range(num_steps)):
-        next_values = values_ext[:, t + 1, 0]  # Riduci la dimensione dell'ultimo asse
-        not_done = (1.0 - dones[:, t, :].float()) # Il flag di fine episodio per tutti gli UAV
-        # Broadcasting per fare in modo che next_values e values abbiano la stessa forma di rewards
-        next_values = next_values.unsqueeze(-1).expand(-1, max_uav)  # Ora next_values ha forma (num_envs, max_uav)
-        values_current = values[:, t, 0].unsqueeze(-1).expand(-1, max_uav)  # Ora values ha forma (num_envs, max_uav)
-        # Calcola il delta (la differenza tra reward e value)
+        next_values = values_ext[:, t + 1, :]  # (num_envs, num_agents)
+        values_current = values_ext[:, t, :]   # (num_envs, num_agents)
+        not_done = 1.0 - dones[:, t, :].float()
+
         delta = rewards[:, t, :] + args.gamma * next_values * not_done - values_current
-        # Aggiorna GAE
         gae = delta + args.gamma * args.gae_lambda * not_done * gae
-        # Salva le advantages calcolate
+
         advantages[:, t, :] = gae
 
-    # I ritorni sono la somma delle advantages e dei valori
-    returns = advantages + values[:, :, 0].unsqueeze(-1).expand(-1, -1, max_uav)  # Broadcasting per adattarsi a (num_envs, num_steps, max_uav)
-
+    returns = advantages + values  # stessa shape: (num_envs, num_steps, num_agents)
     return advantages, returns
 
 def process_state_batch(state_batch):
@@ -380,7 +369,7 @@ if __name__ == "__main__":
         log_probs_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.float32).to(device)
         rewards_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.float32).to(device)
         dones_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.bool).to(device)
-        values_tensor = torch.zeros((args.num_envs, args.num_steps, 1), dtype=torch.float32).to(device)
+        values_tensor = torch.zeros((args.num_envs, args.num_steps, args.max_uav_number), dtype=torch.float32).to(device)
         
         global_step = 0
         start_time = time.time()
@@ -454,7 +443,7 @@ if __name__ == "__main__":
                 log_probs_tensor[:, step, :] = logprobs
                 rewards_tensor[:, step, :] = rewards
                 dones_tensor[:, step, :] = dones
-                values_tensor[:, step, 0] = values
+                values_tensor[:, step, :] = values
 
                 # Aggiorna lo stato corrente
                 states = next_states
@@ -492,7 +481,7 @@ if __name__ == "__main__":
             flat_log_probs = log_probs_tensor.reshape(args.batch_size, args.max_uav_number)
             #flat_rewards = rewards_tensor.reshape(args.batch_size, args.max_uav_number)
             #flat_dones = dones_tensor.reshape(args.batch_size, args.max_uav_number)
-            flat_values = values_tensor.reshape(args.batch_size, 1)
+            flat_values = values_tensor.reshape(args.batch_size, args.max_uav_number)
             flat_advantages = advantages_tensor.reshape(args.batch_size, args.max_uav_number)
             flat_returns = returns_tensor.reshape(args.batch_size, args.max_uav_number)
 
@@ -516,13 +505,13 @@ if __name__ == "__main__":
                     
                     #mb_rewards = flat_rewards[mb_inds].expand(-1, args.max_uav_number)         # [MB, MAX_UAV]
                     #mb_dones = flat_dones[mb_inds].expand(-1, args.max_uav_number)             # [MB, MAX_UAV]
-                    mb_values = flat_values[mb_inds]                                            # [MB, 1]
+                    mb_values = flat_values[mb_inds]                                            # [MB, MAX_UAV]
                     mb_advantages = flat_advantages[mb_inds]                                    # [MB, MAX_UAV]
                     mb_returns = flat_returns[mb_inds]                                          # [MB, MAX_UAV]
 
 
                     # Forward della rete
-                    _, newlogprob, entropy, newvalue = ppo_net(mb_map_exploration, 
+                    _, newlogprob, entropy, newvalues = ppo_net(mb_map_exploration, 
                                                                mb_state_uav, 
                                                                mb_state_connected_gu,
                                                                mb_uav_flags, 
@@ -532,10 +521,10 @@ if __name__ == "__main__":
                     
                     mb_masked_logprobs = mb_logprobs[mb_uav_mask]          # Maschera su logprobs
                     mb_masked_newlogprob = newlogprob[mb_uav_mask]  # Maschera su logprobs
-                    mb_masked_values = mb_values.expand(-1, args.max_uav_number)[mb_uav_mask]
+                    mb_masked_values = mb_values[mb_uav_mask]
                     mb_masked_advantages = mb_advantages[mb_uav_mask]  # Maschera su advantages
                     mb_masked_returns = mb_returns[mb_uav_mask]
-                    mb_masked_newvalues = newvalue.unsqueeze(-1).expand(-1, args.max_uav_number)[mb_uav_mask]     # Aggiungi dimensione per allineamento
+                    mb_masked_newvalues = newvalues[mb_uav_mask]
                     mb_masked_entropy = entropy[mb_uav_mask]      # Maschera su entropy
                     
                     logratio = mb_masked_newlogprob - mb_masked_logprobs
@@ -578,8 +567,8 @@ if __name__ == "__main__":
                     optimizer.step()
 
             # Log training metrics
-            y_true = flat_returns.cpu().numpy()
             y_pred = flat_values.cpu().numpy()
+            y_true = flat_returns.cpu().numpy()
             print("Primi 10 valori di y_true:", y_true[:10])
             print("Primi 10 valori di y_pred:", y_pred[:10])
             print("Differenze:", y_true[:10] - y_pred[:10])

@@ -22,24 +22,22 @@ class PPOTransformer(nn.Module):
         self.type_embedding = nn.Embedding(2, embed_dim)
 
         # Normalizzazioni
-        self.norm_uav = nn.LayerNorm(embed_dim)
-        self.norm_gu = nn.LayerNorm(embed_dim)
-        self.norm_map = nn.LayerNorm(embed_dim, eps=1e-06, elementwise_affine=True)
-
-        # LayerNorm for normalization of output
-        self.layernorm_output = nn.LayerNorm(embed_dim)
+        self.norm_uav = nn.LayerNorm(embed_dim, eps=1e-6, elementwise_affine=True)
+        self.norm_gu = nn.LayerNorm(embed_dim, eps=1e-6, elementwise_affine=True)
+        self.norm_map = nn.LayerNorm(embed_dim, eps=1e-6, elementwise_affine=True)
+        self.layernorm_output = nn.LayerNorm(embed_dim, eps=1e-6, elementwise_affine=True)
 
         self.transformer_encoder_decoder = nn.Transformer(d_model=embed_dim, batch_first=True, num_encoder_layers=2, num_decoder_layers=2)
         
     def forward(self, map_exploration, UAV_info, GU_positions, uav_flags, uav_mask=None, gu_mask=None):
+        '''
         # Fix gu_mask se contiene righe tutte False
         if gu_mask is not None:
             all_false_rows = ~gu_mask.any(dim=1)  # (B,)
             if all_false_rows.any():
-                '''
-                false_indices = torch.nonzero(all_false_rows, as_tuple=False).squeeze(1).tolist()
-                print(f"⚠️ Righe con gu_mask tutto False: {false_indices}. Forzo gu_mask[:, 0] = True e aggiorno GU_positions.")
-                '''
+                
+                #false_indices = torch.nonzero(all_false_rows, as_tuple=False).squeeze(1).tolist()
+                #print(f"⚠️ Righe con gu_mask tutto False: {false_indices}. Forzo gu_mask[:, 0] = True e aggiorno GU_positions.")
                 
                 gu_mask = gu_mask.clone()
                 GU_positions = GU_positions.clone()
@@ -50,6 +48,7 @@ class PPOTransformer(nn.Module):
                 # Imposta GU_positions[:, 0, :] a un valore neutro/esplorativo
                 # Esempio: zero vector (B, D)
                 GU_positions[all_false_rows, 0, :] = torch.randn_like(GU_positions[all_false_rows, 0, :])  
+        '''
                      
         B, U, _ = UAV_info.shape
         H, W = map_exploration.shape[-2:]  # Ottieni altezza e larghezza della mappa
@@ -92,13 +91,29 @@ class PPOTransformer(nn.Module):
         if gu_mask is not None:
             enc_gu_mask = ~gu_mask                         # [B, G]
         else:
-            enc_gu_mask = torch.zeros(B, N_gu, dtype=torch.bool, device=GU_positions.device)
+            enc_gu_mask = torch.ones(B, N_gu, dtype=torch.bool, device=GU_positions.device)
         enc_map_mask = torch.zeros(B, N_map, dtype=torch.bool, device=map_tokens.device)
 
         # Concateniamo per formare la mask finale
         src_key_padding_mask = torch.cat([enc_map_mask, enc_gu_mask], dim=1)  # [B, total_enc_tokens]
         #src_key_padding_mask = ~gu_mask if gu_mask is not None else None  # (B, G)
         tgt_key_padding_mask = ~uav_mask if uav_mask is not None else None  # (B, U)
+        
+        # Check: ogni riga deve avere almeno un token valido (False)
+        if src_key_padding_mask is not None:
+            if not (~src_key_padding_mask).any(dim=1).all():
+                print("❌ Attenzione: una o più righe di src_key_padding_mask sono completamente mascherate!")
+
+        if tgt_key_padding_mask is not None:
+            if not (~tgt_key_padding_mask).any(dim=1).all():
+                print("❌ Attenzione: una o più righe di tgt_key_padding_mask sono completamente mascherate!")
+
+        final_tokens = self.transformer_encoder_decoder(
+            src=encoder_input,
+            tgt=uav_tokens,
+            src_key_padding_mask=src_key_padding_mask,
+            tgt_key_padding_mask=tgt_key_padding_mask
+        )
         
         '''
         # MAT configuration
@@ -111,13 +126,6 @@ class PPOTransformer(nn.Module):
             tgt_key_padding_mask=tgt_key_padding_mask,
             tgt_mask=causal_mask
         )
-        '''
-        final_tokens = self.transformer_encoder_decoder(
-            src=encoder_input,
-            tgt=uav_tokens,
-            src_key_padding_mask=src_key_padding_mask,
-            tgt_key_padding_mask=tgt_key_padding_mask
-        )
         
         if torch.isnan(final_tokens).any():
             nan_mask = torch.isnan(final_tokens)
@@ -126,6 +134,7 @@ class PPOTransformer(nn.Module):
             print("⚠️ Transformer UAVxGU-MAP decoder output contains NaN at the following positions:")
             for idx in nan_indices:
                 print(f" -> index: {tuple(idx.tolist())}, value: NaN")
+        '''
         
         return self.layernorm_output(final_tokens)
 

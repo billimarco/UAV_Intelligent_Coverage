@@ -36,6 +36,7 @@ class CruiseUAVWithMap(Cruise):
     
     boundary_penalty_total = 0.0
     spatial_coverage_total = 0.0
+    exploration_incentive_total = 0.0
     
     #total_uavs_point_coverage = 0
     #simultaneous_uavs_points_coverage = 0
@@ -598,7 +599,7 @@ class CruiseUAVWithMap(Cruise):
         w_boundary_penalty = 1.0
         w_collision_penalty = 0.0
         w_spatial = 1.0
-        w_explore = 0.0
+        w_explore = 1.0
         w_coverage = 0.0
         
         num_uav = len(self.uav)
@@ -624,10 +625,16 @@ class CruiseUAVWithMap(Cruise):
         # 2. Copertura spaziale (evita UAV sovrapposti) - volendo potrebbe essere reward individuale se altezze uav fossero diverse
         self.spatial_coverage_total = 0
         if self.max_theoretical_ground_uavs_points_coverage > 0 and w_spatial > 0.0:
-            for i in range(num_uav):
+            for i in range(num_uav): 
                 uav_coverage = (self.uav_total_covered_points[i] - self.uav_shared_covered_points[i]) / int(self.max_theoretical_ground_uavs_points_coverage / num_uav)
-                self.spatial_coverage_total += w_spatial * uav_coverage
-                individual_rewards[i] += w_spatial * uav_coverage
+                if uav_coverage > 0.99:
+                    self.spatial_coverage_total += w_spatial * uav_coverage
+                    individual_rewards[i] += w_spatial * uav_coverage
+                else:
+                    self.spatial_coverage_total -= w_spatial * (1 - uav_coverage)
+                    individual_rewards[i] -= w_spatial * (1 - uav_coverage)
+                #self.spatial_coverage_total += w_spatial * uav_coverage
+                #individual_rewards[i] += w_spatial * uav_coverage
 
             
         coverage_threshold = 0.95  # soglia di copertura spaziale per incentivare
@@ -635,10 +642,21 @@ class CruiseUAVWithMap(Cruise):
         # 3. Incentivo all'esplorazione (bassa densità di esplorazione)
         map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
         
-        exploration_incentive = 1 - np.mean(map_exploration)
+        # Conta le celle con valore < 1
+        num_explored_cells = (map_exploration < 1).sum()
+        
+        # Calcola il numero totale di celle
+        total_cells = map_exploration.size
+        
+        #explored_cells = num_explored_cells / total_cells if total_cells > 0 else 0.0
+        
+        
+        #exploration_incentive = 1 - np.mean(map_exploration)
+        exploration_incentive = num_explored_cells / total_cells if total_cells > 0 else 0.0
+        self.exploration_incentive_total = exploration_incentive*num_uav
         
         for i in range(num_uav):
-            individual_rewards[i] += w_explore * exploration_incentive / num_uav
+            individual_rewards[i] += w_explore * exploration_incentive
         
         exploration_threshold = 0.6
         
@@ -738,10 +756,13 @@ class CruiseUAVWithMap(Cruise):
         terminated_matrix = []
         area = self.np_random.choice(self.grid.available_area)
         for i, uav in enumerate(self.uav):
+            '''
             if not uav.position.is_in_area(area) or self.check_collision(i, uav):
                 terminated_matrix.append(True)
             else:
                 terminated_matrix.append(False)
+            '''
+            terminated_matrix.append(False)
         
         # Aggiungi False per gli UAV inattivi (padding)
         padding = self.max_uav_number - len(self.uav)
@@ -834,7 +855,8 @@ class CruiseUAVWithMap(Cruise):
         if self.options["test"]:
             return {"GU coperti": str(self.gu_covered), "Ground Users": str(
                 len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area, 
-                "boundary_penalty_total": self.boundary_penalty_total, "spatial_coverage_total": self.spatial_coverage_total}
+                "boundary_penalty_total": self.boundary_penalty_total, "spatial_coverage_total": self.spatial_coverage_total,
+                "exploration_incentive_total": self.exploration_incentive_total}
             
         return {"GU coperti": str(self.gu_covered), "Ground Users": str(
             len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area}

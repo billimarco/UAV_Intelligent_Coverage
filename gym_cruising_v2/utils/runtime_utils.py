@@ -17,7 +17,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=0,
+    parser.add_argument("--cuda-device", type=int, default=1,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -62,7 +62,7 @@ def parse_args():
     # GU specific arguments
     parser.add_argument("--max-gu-number", type=int, default=120,
                         help="the max number of GUs in the environment")
-    parser.add_argument("--starting-gu-number", type=int, default=5,
+    parser.add_argument("--starting-gu-number", type=int, default=50,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--spawn-gu-prob", type=float, default=0.0005,
                         help="probability of spawning a ground unit per cell or timestep")
@@ -114,7 +114,7 @@ def parse_args():
                         help="if toggled, GU are clustered")
     parser.add_argument("--clusters-number", type=int, default=1,
                         help="the number of clusters in the environment")
-    parser.add_argument("--clusters-variance-min", type=int, default=300,
+    parser.add_argument("--clusters-variance-min", type=int, default=1500,
                         help="the minimum variance of the clusters")
     parser.add_argument("--clusters-variance-max", type=int, default=100000,
                         help="the maximum variance of the clusters")
