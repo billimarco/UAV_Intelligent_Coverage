@@ -1,14 +1,15 @@
 import torch.nn as nn
 import torch
+from typing import Tuple
 
 
 class PPOTransformer(nn.Module):
-    def __init__(self, embed_dim=16, max_uav_number=3, img_size=(500, 500), patch_size=50):
+    def __init__(self, embed_dim: int, max_uav_number: int, map_size: Tuple[int, int], patch_size: int):
         super(PPOTransformer, self).__init__()
 
-        self.img_size = img_size
+        self.map_size = map_size
         self.patch_size = patch_size
-        self.num_patches = ((img_size[0] * img_size[1]) // (patch_size ** 2))
+        self.num_patches = ((map_size[0] * map_size[1]) // (patch_size ** 2))
 
         # Proiezioni di input
         self.uav_proj = nn.Linear(4 + max_uav_number + 4, embed_dim)
@@ -60,7 +61,7 @@ class PPOTransformer(nn.Module):
 
         gu_tokens = self.norm_gu(self.gu_proj(GU_positions))    # [B, G, D]
         
-        map_feat = self.map_patch_proj(map_exploration.unsqueeze(1))    # [B, embed_dim, img_size[0]/patch_size, img_size[1]/patch_size]
+        map_feat = self.map_patch_proj(map_exploration.unsqueeze(1))    # [B, embed_dim, map_size[0]/patch_size, map_size[1]/patch_size]
         map_feat = map_feat.flatten(2).transpose(1, 2)            # [B, N, embed_dim] — N = num_patches
         map_feat += self.map_pos_embedding  # Aggiungi positional encoding
         map_tokens = self.norm_map(map_feat)       # [B, N, D]

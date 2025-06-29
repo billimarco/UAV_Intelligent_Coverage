@@ -26,17 +26,16 @@ class CruiseUAVWithMap(Cruise):
     SINR = []
     connectivity_matrix = []
     disappear_gu_prob: float
-    
-    low_observation: float
-    high_observation: float
 
     gu_covered = 0
     max_gu_covered = 0
     max_theoretical_ground_uavs_points_coverage = 0
     
     boundary_penalty_total = 0.0
+    collision_penalty_total = 0.0
     spatial_coverage_total = 0.0
     exploration_incentive_total = 0.0
+    gu_coverage_total = 0.0
     
     #total_uavs_point_coverage = 0
     #simultaneous_uavs_points_coverage = 0
@@ -58,12 +57,22 @@ class CruiseUAVWithMap(Cruise):
         self.max_speed_uav = args.max_speed_uav # m/s - about 20 Km/h x 10 steps
         self.covered_threshold = args.covered_threshold # dB
         self.uav_altitude = args.uav_altitude # meters
-
-        self.available_gu_indexes = [False]*args.max_gu_number
+        
+        self.w_boundary_penalty = args.w_boundary_penalty
+        self.w_collision_penalty = args.w_collision_penalty
+        self.w_spatial_coverage = args.w_spatial_coverage
+        self.w_exploration = args.w_exploration
+        self.w_gu_coverage = args.w_gu_coverage
+        
+        self.theoretical_max_distance_before_possible_collision = 2*math.sqrt(self.max_speed_uav**2 + self.max_speed_uav**2) + self.collision_distance
 
         self.communication_channel = CommunicationChannel(args)
         
-        self.theoretical_max_distance_before_possible_collision = 2*math.sqrt(self.max_speed_uav**2 + self.max_speed_uav**2) + self.collision_distance
+        # Reset structures
+        self.available_gu_indexes = [False]*args.max_gu_number
+        self.covered_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
+        self.gu_mask = np.zeros(self.max_gu_number, dtype=bool)
+        
         self.reset_observation_action_space()
 
 
@@ -123,12 +132,12 @@ class CruiseUAVWithMap(Cruise):
             self.options = options
             
         self.seed = random.randint(0, 10000)
+        np.random.seed(self.seed)
             
         self.uav = []
         self.gu = []
         self.uav_number = self.options["uav"]
         self.starting_gu_number = self.options["gu"]
-        self.available_gu_indexes = [False]*self.max_gu_number
         #RAND
         #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
@@ -137,31 +146,16 @@ class CruiseUAVWithMap(Cruise):
         #self.simultaneous_uavs_points_coverage = 0
         self.uav_total_covered_points = []
         self.uav_shared_covered_points = []
+        
+        self.available_gu_indexes = [False]*self.max_gu_number
+        self.last_position_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
+        self.gu_mask = np.zeros(self.max_gu_number, dtype=bool)
+        
         self.grid.reset()
         self.reset_observation_action_space()
         np.random.seed(self.seed)
         return super().reset(seed=self.seed, options=self.options)
-    
-    def reset_gu(self, options: Optional[dict] = None) -> np.ndarray:
-        self.gu = []
-        self.available_gu_indexes = [False]*self.max_gu_number
-        #RAND
-        #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
-        self.gu_covered = 0
-        self.max_gu_covered = 0
-        if not options['clustered']:
-            self.init_gu()
-        else:
-            self.init_gu_clustered(options)
-            
-        self.calculate_uav_area_max_coverage()
-        self.calculate_PathLoss_with_Markov_Chain()
-        self.calculate_SINR()
-        self.calculate_UAVs_connection_area_vectorized()
-        self.check_connection_and_coverage_UAV_GU()
-        self.reset_observation_action_space()
-        return self.get_observation()
-    
+
     
     # INITIALIZE ENVIROMENT
     def init_environment(self, options: Optional[dict] = None) -> None:
@@ -176,7 +170,6 @@ class CruiseUAVWithMap(Cruise):
         self.calculate_SINR()
         self.calculate_UAVs_connection_area_vectorized()
         self.check_connection_and_coverage_UAV_GU()
-        self.reset_observation_action_space()
  
     def init_uav(self) -> None:
         area = self.np_random.choice(self.grid.spawn_area)
@@ -200,7 +193,7 @@ class CruiseUAVWithMap(Cruise):
             position = Coordinate(x_coordinate, y_coordinate, 0)
             gu = GU(i,position)
             self.available_gu_indexes[i] = True
-            self.initialize_channel(gu)
+            self.init_channel(gu)
             self.gu.append(gu)
 
     def init_gu_clustered(self, options: Optional[dict] = None) -> None:
@@ -222,10 +215,10 @@ class CruiseUAVWithMap(Cruise):
                         repeat = False
                 gu = GU(i*gu_for_cluster+j,position)
                 self.available_gu_indexes[i*gu_for_cluster+j] = True
-                self.initialize_channel(gu)
+                self.init_channel(gu)
                 self.gu.append(gu)
 
-    def initialize_channel(self, gu):
+    def init_channel(self, gu):
         for uav in self.uav:
             distance = gu.position.calculate_distance_to_coordinate(uav.position)
             initial_channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
@@ -305,24 +298,28 @@ class CruiseUAVWithMap(Cruise):
 
         # Le posizioni da uav_number a max_uav_number rimangono a zero e sono indicate come inattive nella maschera (padding)
 
-        # Inizializza lo stato degli utenti coperti e la relativa maschera (padding)
-        covered_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
-        gu_mask = np.zeros(self.max_gu_number, dtype=bool)
 
-        # Raccogli le posizioni normalizzate solo degli utenti coperti
-        covered_users_positions = []
-        covered_users_ids =  []
+        # Inizializza lo stato delle ultime posizioni normalizzate degli utenti
+        last_normalized_positions_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
+ 
+        # Togli le posizioni dal vettore di stato delle ultime posizioni che sono attualmente coperte e la maschera
+        for gu_id, last_gu_position in enumerate(self.last_position_users_states):
+            last_gu_position_coordinate = Coordinate(last_gu_position[0], last_gu_position[1], 0) # posizione normalizzata [x, y]
+            if self.grid.get_point_from_coordinate(last_gu_position_coordinate).is_covered():
+                self.last_position_users_states[gu_id] = np.array([0, 0], dtype=np.float64)  # resetta la posizione dell'utente
+                self.gu_mask[gu_id] = False  # inattivo l'utente
+              
+        # Aggiorna le posizioni del vettore di stato delle ultime posizioni degli utenti coperti e la maschera
         for gu in self.gu:
             if gu.covered:
-                covered_users_positions.append(self.normalizePositions(gu.position))
-                covered_users_ids.append(gu.id)
-
-        # Copia le posizioni normalizzate nella matrice di output fino al massimo consentito
-        for i, ids in enumerate(covered_users_ids):
-            covered_users_states[ids] = covered_users_positions[i]
-            gu_mask[ids] = True  # marca l’utente come coperto/attivo
-
-        # Le righe da num_to_copy a max_gu_number rimangono zero e sono marcate come inattive nella maschera (padding)
+                self.last_position_users_states[gu.id] = gu.position.to_array_2d()  # aggiorna la posizione dell'utente
+                self.gu_mask[gu.id] = True  # marca l’utente come coperto/attivo
+        
+        # Raccogli le posizioni normalizzate degli utenti coperti
+        for gu_id, last_gu_position in enumerate(self.last_position_users_states):
+            if self.gu_mask[gu_id]:
+                last_gu_position_coordinate = Coordinate(last_gu_position[0], last_gu_position[1], 0)
+                last_normalized_positions_users_states[gu_id] = self.normalizePositions(last_gu_position_coordinate)  # posizione normalizzata [x, y]
 
         # Crea il dizionario di osservazione da restituire
         observation = {
@@ -330,8 +327,8 @@ class CruiseUAVWithMap(Cruise):
             "uav_states": uav_states,
             "uav_mask": uav_mask,
             "uav_flags": uav_flags,
-            "covered_users_states": covered_users_states,
-            "gu_mask": gu_mask
+            "covered_users_states": last_normalized_positions_users_states,
+            "gu_mask": self.gu_mask
         }
 
         return observation
@@ -348,7 +345,6 @@ class CruiseUAVWithMap(Cruise):
         self.calculate_SINR()
         self.calculate_UAVs_connection_area_vectorized()
         self.check_connection_and_coverage_UAV_GU()
-        self.reset_observation_action_space()
 
     def update_GU(self):
         #RAND
@@ -358,8 +354,20 @@ class CruiseUAVWithMap(Cruise):
         #self.check_if_disappear_GU()
 
     def move_UAV(self, actions):
-        real_actions = actions["uav_moves"][actions["uav_mask"]]  
+        real_actions = actions["uav_moves"][actions["uav_mask"]]
+        
+        # Movimento in un cerchio 2D con valori limitati da [-self.max_speed_uav, self.max_speed_uav]
+        # Limita i vettori al cerchio unitario
+        norms = np.linalg.norm(real_actions, axis=1, keepdims=True)
+        norms = np.maximum(norms, 1.0)  # Se <=1 lascia invariato, se >1 normalizza
+        clipped_actions = real_actions / norms
+
+        # Scala al massimo raggio
+        actions = self.max_speed_uav * clipped_actions
+        '''
+        # Movimento in un quadrato 2D con valori per dimensione da [-self.max_speed_uav, self.max_speed_uav]  
         actions = self.max_speed_uav * real_actions
+        '''
         for i, uav in enumerate(self.uav):
             uav.position = Coordinate(uav.position.x_coordinate + actions[i][0], uav.position.y_coordinate + actions[i][1], self.uav_altitude)
             uav.last_shift_x = actions[i][0]
@@ -441,7 +449,7 @@ class CruiseUAVWithMap(Cruise):
         )
 
         # Estrae le posizioni 3D di tutti gli UAV in un array NumPy (UAV, 3)
-        uav_positions = np.array([uav.position.to_array() for uav in self.uav])
+        uav_positions = np.array([uav.position.to_array_3d() for uav in self.uav])
 
         point_refs = []
         point_coords = []
@@ -596,45 +604,63 @@ class CruiseUAVWithMap(Cruise):
         return np.sum(np.any(tmp_matrix, axis=1))
     
     def calculate_reward(self, terminated):
-        w_boundary_penalty = 1.0
-        w_collision_penalty = 0.0
-        w_spatial = 1.0
-        w_explore = 1.0
-        w_coverage = 0.0
-        
+
         num_uav = len(self.uav)
         individual_rewards = [0.0 for _ in range(self.max_uav_number)]
 
         # 1. Penalità per avvicinamento ai bordi e agli altri uav
         self.boundary_penalty_total = 0
+        self.collision_penalty_total = 0
         for i in range(num_uav):
             boundary_penalty = self.calculate_boundary_repulsive_potential(self.uav[i])
-            self.boundary_penalty_total -= w_boundary_penalty * boundary_penalty
+            self.boundary_penalty_total -= self.w_boundary_penalty * boundary_penalty
             #afar_boundary_incentive = 1.0 - boundary_penalty
-            individual_rewards[i] -= w_boundary_penalty * boundary_penalty
+            individual_rewards[i] -= self.w_boundary_penalty * boundary_penalty
 
             # Collisioni
             for j in range(i + 1, num_uav):
                 collision_penalty = self.calculate_uav_repulsive_potential(self.uav[i], self.uav[j])
                 #afar_collision_incentive = 1.0 - collision_penalty
-                individual_rewards[i] -= w_collision_penalty * collision_penalty
-                individual_rewards[j] -= w_collision_penalty * collision_penalty
+                self.collision_penalty_total -= 2 * self.w_collision_penalty * collision_penalty
+                individual_rewards[i] -= self.w_collision_penalty * collision_penalty
+                individual_rewards[j] -= self.w_collision_penalty * collision_penalty
         
         
 
         # 2. Copertura spaziale (evita UAV sovrapposti) - volendo potrebbe essere reward individuale se altezze uav fossero diverse
         self.spatial_coverage_total = 0
-        if self.max_theoretical_ground_uavs_points_coverage > 0 and w_spatial > 0.0:
+        if self.max_theoretical_ground_uavs_points_coverage > 0 and self.w_spatial_coverage > 0.0:
             for i in range(num_uav): 
                 uav_coverage = (self.uav_total_covered_points[i] - self.uav_shared_covered_points[i]) / int(self.max_theoretical_ground_uavs_points_coverage / num_uav)
+                #reward individuale per copertura spaziale tipo 1
+                '''
                 if uav_coverage > 0.99:
                     self.spatial_coverage_total += w_spatial * uav_coverage
                     individual_rewards[i] += w_spatial * uav_coverage
                 else:
                     self.spatial_coverage_total -= w_spatial * (1 - uav_coverage)
                     individual_rewards[i] -= w_spatial * (1 - uav_coverage)
-                #self.spatial_coverage_total += w_spatial * uav_coverage
-                #individual_rewards[i] += w_spatial * uav_coverage
+                '''
+                #reward individuale per copertura spaziale tipo 2
+                '''
+                self.spatial_coverage_total += w_spatial * uav_coverage
+                individual_rewards[i] += w_spatial * uav_coverage
+                '''
+                # reward globale per copertura spaziale tipo 1
+                '''
+                if uav_coverage > 0.99:
+                    self.spatial_coverage_total += 0
+                else:
+                    self.spatial_coverage_total -= (1 - uav_coverage)
+            for i in range(num_uav):
+                individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
+                '''
+                    
+                # reward globale per copertura spaziale tipo 2
+                self.spatial_coverage_total -= (1 - uav_coverage)
+            for i in range(num_uav):
+                individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
+            
 
             
         coverage_threshold = 0.95  # soglia di copertura spaziale per incentivare
@@ -653,16 +679,17 @@ class CruiseUAVWithMap(Cruise):
         
         #exploration_incentive = 1 - np.mean(map_exploration)
         exploration_incentive = num_explored_cells / total_cells if total_cells > 0 else 0.0
-        self.exploration_incentive_total = exploration_incentive*num_uav
+        self.exploration_incentive_total = exploration_incentive * num_uav
         
         for i in range(num_uav):
-            individual_rewards[i] += w_explore * exploration_incentive
+            individual_rewards[i] += self.w_exploration * exploration_incentive
         
         exploration_threshold = 0.6
         
         # TODO Potrebbe essere un idea mettere dei booleani in self per indicare se siamo in fase esplorativa o in fase di copertura
         
         # 4. Copertura dei GU massima
+        self.gu_coverage_total = 0
         contributions = [
             max(0.0, self.gu_covered - self.calculate_RCR_without_uav_i(i))
             for i in range(len(self.uav))
@@ -673,14 +700,24 @@ class CruiseUAVWithMap(Cruise):
         else:
             proportions = [1.0 / num_uav] * num_uav
             
+            
         if exploration_incentive >= exploration_threshold:
             coverage_score = self.gu_covered / self.max_gu_covered if self.max_gu_covered > 0 else 0.0
         else:
             coverage_score = 0.0  # ignoriamo copertura se la mappa è troppo inesplorata
-        global_coverage = w_coverage * coverage_score
+        gu_coverage = self.w_gu_coverage * coverage_score
         
+        '''
+        # Reward individuale per copertura GU
         for i in range(num_uav):
-            individual_rewards[i] += (proportions[i] * global_coverage)
+            individual_rewards[i] += (proportions[i] * gu_coverage) * num_uav
+            self.gu_coverage_total += (proportions[i] * gu_coverage) * num_uav
+        '''    
+        
+        # Reward globale per copertura GU
+        for i in range(num_uav):
+            individual_rewards[i] += gu_coverage
+            self.gu_coverage_total += gu_coverage
         
         #5. Penalità per UAV terminati
         '''
@@ -691,7 +728,8 @@ class CruiseUAVWithMap(Cruise):
 
             
 
-        '''  
+        '''
+        # Log rewards for debugging  
         self.log_rewards(
             contributions, entropy_contribution_score, spatial_coverage,
             exploration_incentive, coverage_score,
@@ -729,7 +767,7 @@ class CruiseUAVWithMap(Cruise):
                 y_coordinate = int(self.np_random.uniform(area[1][0], area[1][1]))
                 position = self.grid.get_point(x_coordinate, y_coordinate)
                 gu = GU(position)
-                self.initialize_channel(gu)
+                self.init_channel(gu)
                 self.gu.append(gu)
         # update disappear gu probability
         self.disappear_gu_prob = self.spawn_gu_prob * 4 / len(self.gu)
@@ -855,24 +893,12 @@ class CruiseUAVWithMap(Cruise):
         if self.options["test"]:
             return {"GU coperti": str(self.gu_covered), "Ground Users": str(
                 len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area, 
-                "boundary_penalty_total": self.boundary_penalty_total, "spatial_coverage_total": self.spatial_coverage_total,
-                "exploration_incentive_total": self.exploration_incentive_total}
+                "boundary_penalty_total": self.boundary_penalty_total, 
+                "collision_penalty_total": self.collision_penalty_total,
+                "spatial_coverage_total": self.spatial_coverage_total,
+                "exploration_incentive_total": self.exploration_incentive_total,
+                "gu_coverage_total": self.gu_coverage_total}
             
         return {"GU coperti": str(self.gu_covered), "Ground Users": str(
             len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area}
 
-    def log_rewards(self, contributions, entropy_score, spatial_coverage, exploration_incentive,
-                coverage_score, boundary_penalty, collision_penalty, global_reward, terminated):
-        """
-        Logga i componenti del reward, includendo se almeno un UAV è terminato.
-        """
-        print("🔍 [Reward Breakdown]")
-        print(f"  ➤ UAV Contributions: {['{:.3f}'.format(c) for c in contributions]}")
-        print(f"  ➤ Entropy Score: {entropy_score:.3f}")
-        print(f"  ➤ Spatial Coverage: {spatial_coverage:.3f}")
-        print(f"  ➤ Exploration Incentive: {exploration_incentive:.3f}")
-        print(f"  ➤ GU Coverage Score: {coverage_score:.3f}")
-        print(f"  ➤ Boundary Penalty: -{boundary_penalty:.3f}")
-        print(f"  ➤ Collision Penalty: -{collision_penalty:.3f}")
-        print(f"  ✅ Total Global Reward: {global_reward:.3f}")
-        print(f"  ⚠️  Any UAV Terminated: {any(terminated)}")

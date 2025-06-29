@@ -17,7 +17,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=1,
+    parser.add_argument("--cuda-device", type=int, default=0,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -29,8 +29,6 @@ def parse_args():
                         help="the entity (team) of wandb's project")
     
     # Algorithm specific arguments
-    parser.add_argument("--alg", type=str, default="PPO", nargs="?", const="PPO",
-                        help="Algorithm to use: PPO, TD3")
     parser.add_argument("--render-mode", type=str, default=None, 
                         help="Render mode (e.g., human or None")
     parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -44,7 +42,12 @@ def parse_args():
     # NN specific arguments
     parser.add_argument("--embedded-dim", type=int, default=32,
                     help="Size of the embedding vector used to represent agent observations or features")
-
+    parser.add_argument("--patch-size", type=int, default=50,
+                    help="Size of map patches (possibly a map length divider in all directions)")
+    parser.add_argument("--global-value", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="if toggled, you use only one global value for all agents")
+    
+    
     # UAV specific arguments
     parser.add_argument("--max-uav-number", type=int, default=3,
                         help="the max number of UAVs in the environment")
@@ -119,26 +122,40 @@ def parse_args():
     parser.add_argument("--clusters-variance-max", type=int, default=100000,
                         help="the maximum variance of the clusters")
     
+    # Reward specific arguments
+    parser.add_argument("--w-boundary-penalty", type=float, default=0.0,
+                    help="Weight applied to the penalty when UAVs exceed the environment boundaries")
+    parser.add_argument("--w-collision-penalty", type=float, default=0.0,
+                        help="Weight applied to the penalty for collisions between UAVs")
+    parser.add_argument("--w-spatial-coverage", type=float, default=1.0,
+                        help="Weight for encouraging UAVs to cover as much area as possible")
+    parser.add_argument("--w-exploration", type=float, default=1.0,
+                        help="Weight for encouraging UAVs to explore new or less-visited areas")
+    parser.add_argument("--w-gu-coverage", type=float, default=0.0,
+                        help="Weight for encouraging UAVs to cover ground user (GU) positions")
+
+    
+    
     # PPO specific arguments
     parser.add_argument("--num-envs", type=int, default=16,
                         help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128,
                         help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--updates-per-env", type=int, default=1000,
-                        help="the number of steps to run in each environment")
+    parser.add_argument("--updates", type=int, default=200,
+                        help="the number of updates (rollout + training)")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Use GAE for advantage computation")
-    parser.add_argument("--gamma", type=float, default=0.99,
+    parser.add_argument("--gamma", type=float, default=0.95,
                         help="the discount factor gamma")
-    parser.add_argument("--gae-lambda", type=float, default=0.95,
+    parser.add_argument("--gae-lambda", type=float, default=0.90,
                         help="the lambda for the general advantage estimation")
     parser.add_argument("--num-minibatches", type=int, default=8,
                         help="the number of mini-batches") 
-    parser.add_argument("--update-epochs", type=int, default=4,
+    parser.add_argument("--update-epochs", type=int, default=2,
                         help="the K epochs to update the policy")
     parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Toggles advantages normalization")
-    parser.add_argument("--norm-value", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--norm-value", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="Toggles values(returns) normalization")
     parser.add_argument("--clip-coef", type=float, default=0.2,
                         help="the surrogate clipping coefficient")
@@ -150,6 +167,12 @@ def parse_args():
                         help="coefficient of the value function")
     parser.add_argument("--max-grad-norm", type=float, default=0.5,
                         help="the maximum norm for the gradient clipping")
+    
+    # Test specific arguments
+    parser.add_argument("--updates-per-test", type=int, default=20,
+                        help="the number of updates before a test")
+    parser.add_argument("--test-steps-after-trunc", type=int, default=500,
+                        help="the number of steps in a test enviroment before a truncation")
     
 
     args = parser.parse_args()

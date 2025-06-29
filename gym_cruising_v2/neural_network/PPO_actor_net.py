@@ -6,7 +6,7 @@ hidden_sizes = [256, 256]
 
 
 class ActorHead(nn.Module):
-    def __init__(self, token_dim=16):
+    def __init__(self, token_dim):
         super(ActorHead, self).__init__()
         self.fl1 = nn.Linear(token_dim, hidden_sizes[0])
         self.fl2 = nn.Linear(hidden_sizes[0], hidden_sizes[1])

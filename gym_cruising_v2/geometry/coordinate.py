@@ -87,8 +87,17 @@ class Coordinate:
         return (volume[0, 0] < self.x_coordinate < volume[0, 1]
                 and volume[1, 0] < self.y_coordinate < volume[1, 1]
                 and volume[2, 0] < self.z_coordinate < volume[2, 1])
+    
+    def to_array_2d(self) -> np.ndarray:
+        """
+        Converte la coordinata in un array NumPy.
 
-    def to_array(self) -> np.ndarray:
+        Returns:
+            np.ndarray: Array [x, y].
+        """
+        return np.array([self.x_coordinate, self.y_coordinate])
+
+    def to_array_3d(self) -> np.ndarray:
         """
         Converte la coordinata in un array NumPy.
 

@@ -58,7 +58,6 @@ class Cruise(Env):
             self.options = options
 
         super().reset(seed=self.seed, options=self.options)
-        np.random.seed(self.seed)
 
         self.init_environment(options=self.options)
 
@@ -72,6 +71,7 @@ class Cruise(Env):
         assert self.observation_space.contains(observation)
         terminated = self.check_if_terminated()
         info = self.create_info(terminated)
+        info["id"]= self.seed
 
         if self.render_mode == "human":
             self.render_frame()
@@ -119,6 +119,7 @@ class Cruise(Env):
         
         info["terminated_per_uav"] = np.asarray(terminated, dtype=bool)
         info["reward_per_uav"] = np.asarray(reward, dtype=np.float32)
+        info["id"]= self.seed
 
         if self.render_mode == "human":
             self.render_frame()

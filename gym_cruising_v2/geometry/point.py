@@ -66,6 +66,15 @@ class Point:
         if self.point_row <= area[1, 0] or self.point_row >= area[1, 1]:
             return False
         return True
+    
+    def is_covered(self) -> bool:
+        """
+        Verifica se il punto è coperto.
+
+        Returns:
+            bool: True se il punto è coperto, False altrimenti.
+        """
+        return self.covered
 
     def increment_step_from_last_visit(self) -> None:
         """
@@ -88,7 +97,7 @@ class Point:
         """
         self.covered = covered
 
-    def to_array(self) -> np.ndarray:
+    def to_array_2d(self) -> np.ndarray:
         """
         Converte il punto in un array NumPy 2D.
 
