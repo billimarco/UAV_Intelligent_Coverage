@@ -670,7 +670,7 @@ if __name__ == "__main__":
     
     if args.use_trained:
         # Load the trained model
-        ppo_net = PPONet(embed_dim=args.embedded_dim, max_uav_number=args.max_uav_number, max_gu_number=args.max_gu_number).to(device)
+        ppo_net = PPONet(embed_dim=args.embedded_dim, max_uav_number=args.max_uav_number, map_size=(args.window_height*args.resolution, args.window_width*args.resolution), patch_size=args.patch_size, global_value=args.global_value).to(device)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         # Path al file dei pesi
@@ -681,7 +681,7 @@ if __name__ == "__main__":
         
     if args.numerical_test:
         # Load the trained model
-        ppo_net = PPONet(embed_dim=args.embedded_dim, max_uav_number=args.max_uav_number, max_gu_number=args.max_gu_number).to(device)
+        ppo_net = PPONet(embed_dim=args.embedded_dim, max_uav_number=args.max_uav_number, map_size=(args.window_height*args.resolution, args.window_width*args.resolution), patch_size=args.patch_size, global_value=args.global_value).to(device)
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         # Path al file dei pesi

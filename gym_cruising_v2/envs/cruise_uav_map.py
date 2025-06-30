@@ -30,6 +30,7 @@ class CruiseUAVWithMap(Cruise):
     gu_covered = 0
     max_gu_covered = 0
     max_theoretical_ground_uavs_points_coverage = 0
+    max_theoretical_new_explored_ground_uavs_points = 0
     
     boundary_penalty_total = 0.0
     collision_penalty_total = 0.0
@@ -41,6 +42,9 @@ class CruiseUAVWithMap(Cruise):
     #simultaneous_uavs_points_coverage = 0
     uav_total_covered_points = []
     uav_shared_covered_points = []
+    
+    last_unexplored_area_points: int
+    new_explored_area_points: int
 
     def __init__(self, args, render_mode=None) -> None:
         super().__init__(args, render_mode)
@@ -136,12 +140,23 @@ class CruiseUAVWithMap(Cruise):
             
         self.uav = []
         self.gu = []
+        self.pathLoss = []
+        self.SINR = []
+        self.connectivity_matrix = []
         self.uav_number = self.options["uav"]
         self.starting_gu_number = self.options["gu"]
         #RAND
         #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
         self.max_gu_covered = 0
+        self.max_theoretical_ground_uavs_points_coverage = 0
+        self.max_theoretical_new_explored_ground_uavs_points = 0
+        
+        self.boundary_penalty_total = 0.0
+        self.collision_penalty_total = 0.0
+        self.spatial_coverage_total = 0.0
+        self.exploration_incentive_total = 0.0
+        self.gu_coverage_total = 0.0
         #self.total_uavs_point_coverage = 0
         #self.simultaneous_uavs_points_coverage = 0
         self.uav_total_covered_points = []
@@ -152,6 +167,8 @@ class CruiseUAVWithMap(Cruise):
         self.gu_mask = np.zeros(self.max_gu_number, dtype=bool)
         
         self.grid.reset()
+        self.last_unexplored_area_points = self.grid.grid_width*self.grid.grid_height
+        self.new_explored_area_points = 0
         self.reset_observation_action_space()
         np.random.seed(self.seed)
         return super().reset(seed=self.seed, options=self.options)
@@ -169,6 +186,7 @@ class CruiseUAVWithMap(Cruise):
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
         self.calculate_UAVs_connection_area_vectorized()
+        self.calculate_new_explored_area_points()
         self.check_connection_and_coverage_UAV_GU()
  
     def init_uav(self) -> None:
@@ -344,6 +362,7 @@ class CruiseUAVWithMap(Cruise):
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
         self.calculate_UAVs_connection_area_vectorized()
+        self.calculate_new_explored_area_points()
         self.check_connection_and_coverage_UAV_GU()
 
     def update_GU(self):
@@ -518,8 +537,10 @@ class CruiseUAVWithMap(Cruise):
                 for pixel in pixel_row:
                     pixel.calculate_mean_step_from_last_visit()
 
+    
     def calculate_uav_area_max_coverage(self):
         max_ground_coverage_points = 0
+        max_new_explored_ground_points = 0
 
         for uav in self.uav:
             h = uav.position.z_coordinate
@@ -529,8 +550,33 @@ class CruiseUAVWithMap(Cruise):
                 r_ground = math.ceil(math.sqrt(R**2 - h**2))
                 area = math.pi * r_ground**2
                 max_ground_coverage_points += math.ceil(area)
+                
+                new_area = self.calculate_single_uav_theoretical_new_area_explored_after_one_step(r_ground, self.max_speed_uav)
+                max_new_explored_ground_points += math.ceil(new_area)
 
         self.max_theoretical_ground_uavs_points_coverage = max_ground_coverage_points
+        self.max_theoretical_new_explored_ground_uavs_points = max_new_explored_ground_points
+    
+    def calculate_single_uav_theoretical_new_area_explored_after_one_step(self, r, d):
+        # si considera che il raggio di copertura non cambi. In caso cambia va cambiata l'implementazione. https://mathworld.wolfram.com/Circle-CircleIntersection.html
+        if d >= 2 * r:
+            return math.pi * r**2
+        elif d <= 0:
+            return 0
+        else:
+            part1 = r**2 * math.acos(d / (2 * r))
+            part3 = 0.5 * d * math.sqrt(4 * r**2 - d**2)
+            overlap_area = 2 * part1 - part3
+            return math.pi * r**2 - overlap_area
+    
+    def calculate_new_explored_area_points(self):
+        map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
+        
+        # Conta le celle con valore = 1
+        actual_num_unexplored_area_points = (map_exploration == 1).sum()
+        
+        self.new_explored_area_points = self.last_unexplored_area_points - actual_num_unexplored_area_points
+        self.last_unexplored_area_points = actual_num_unexplored_area_points
         
     def calculate_boundary_repulsive_potential(self, uav):
         """
@@ -647,38 +693,39 @@ class CruiseUAVWithMap(Cruise):
                 individual_rewards[i] += w_spatial * uav_coverage
                 '''
                 # reward globale per copertura spaziale tipo 1
-                '''
-                if uav_coverage > 0.99:
+                
+                if uav_coverage > 0.90:
                     self.spatial_coverage_total += 0
                 else:
                     self.spatial_coverage_total -= (1 - uav_coverage)
             for i in range(num_uav):
                 individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
-                '''
-                    
+                
+                '''   
                 # reward globale per copertura spaziale tipo 2
                 self.spatial_coverage_total -= (1 - uav_coverage)
             for i in range(num_uav):
                 individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
-            
+                '''
 
             
         coverage_threshold = 0.95  # soglia di copertura spaziale per incentivare
         
         # 3. Incentivo all'esplorazione (bassa densità di esplorazione)
-        map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
-        
-        # Conta le celle con valore < 1
-        num_explored_cells = (map_exploration < 1).sum()
         
         # Calcola il numero totale di celle
-        total_cells = map_exploration.size
+        total_area_points = self.grid.grid_width*self.grid.grid_height
+
+        num_explored_area_points = total_area_points - self.last_unexplored_area_points
         
-        #explored_cells = num_explored_cells / total_cells if total_cells > 0 else 0.0
+        explored_area_points_incentive = num_explored_area_points / total_area_points if total_area_points > 0 else 0.0
+
+        new_explored_area_points_incentive = (1 - explored_area_points_incentive) * self.new_explored_area_points / self.max_theoretical_new_explored_ground_uavs_points # incentivo per esplorazione efficaciemente distribuita
         
         
         #exploration_incentive = 1 - np.mean(map_exploration)
-        exploration_incentive = num_explored_cells / total_cells if total_cells > 0 else 0.0
+        #exploration_incentive = explored_area_points_incentive
+        exploration_incentive = explored_area_points_incentive + new_explored_area_points_incentive  # teoricamente limitato a 1
         self.exploration_incentive_total = exploration_incentive * num_uav
         
         for i in range(num_uav):

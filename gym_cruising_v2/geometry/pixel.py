@@ -77,7 +77,10 @@ class Pixel:
 
         if not self.covered:
             ratio = min(max(self.mean_step_from_last_visit / self.unexplored_point_max_steps, 0), 1)
-            self.color = (255, int(255 * (1 - ratio)), 0)
+            if ratio == 1:
+                self.color = (0,0,0)
+            else:
+                self.color = (255, int(255 * (1 - ratio)), 0)
         else:
             ratio = min(max(covered_points / total_points, 0), 1)
             self.color = (255, 255, int(255 * ratio))
