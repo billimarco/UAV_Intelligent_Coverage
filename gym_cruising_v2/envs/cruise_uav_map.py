@@ -714,6 +714,7 @@ class CruiseUAVWithMap(Cruise):
         # 3. Incentivo all'esplorazione (bassa densità di esplorazione)
         
         # Calcola il numero totale di celle
+        map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
         total_area_points = self.grid.grid_width*self.grid.grid_height
 
         num_explored_area_points = total_area_points - self.last_unexplored_area_points
@@ -723,9 +724,10 @@ class CruiseUAVWithMap(Cruise):
         new_explored_area_points_incentive = (1 - explored_area_points_incentive) * self.new_explored_area_points / self.max_theoretical_new_explored_ground_uavs_points # incentivo per esplorazione efficaciemente distribuita
         
         
-        #exploration_incentive = 1 - np.mean(map_exploration)
+        
+        balanced_exploration_incentive = 1 - np.mean(map_exploration)
         #exploration_incentive = explored_area_points_incentive
-        exploration_incentive = explored_area_points_incentive + new_explored_area_points_incentive  # teoricamente limitato a 1
+        exploration_incentive = explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive # teoricamente limitato a 1
         self.exploration_incentive_total = exploration_incentive * num_uav
         
         for i in range(num_uav):
