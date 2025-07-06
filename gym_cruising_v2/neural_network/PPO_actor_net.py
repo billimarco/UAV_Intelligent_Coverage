@@ -33,7 +33,7 @@ class ActorHead(nn.Module):
         x = F.relu(self.fl2(x))
         
         mean_valid = self.fl3_mean(x)
-        log_std_valid = self.fl3_logstd(x).clamp(-20, 2)
+        log_std_valid = self.fl3_logstd(x).clamp(-20, 20)
         std_valid = torch.exp(log_std_valid)
 
 

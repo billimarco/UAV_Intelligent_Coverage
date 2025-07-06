@@ -107,15 +107,11 @@ class PPONet(nn.Module):
         """
         mean, std = self.actor_head(uav_tokens, uav_mask)  # (B, U, 2)
 
-        # Clamping della std per evitare instabilità numeriche
-        std = std.clamp(min=1e-6)
-
         # Distribuzione normale per campionare le azioni
         dist = Normal(mean, std)
         if actions is None:
             raw_actions = dist.rsample()  # campionamento con reparametrizzazione
             
-
             # Squash in [-1, 1]
             actions = torch.tanh(raw_actions)
 

@@ -700,13 +700,14 @@ class CruiseUAVWithMap(Cruise):
                     self.spatial_coverage_total -= (1 - uav_coverage)
             for i in range(num_uav):
                 individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
+            self.spatial_coverage_total *= self.w_spatial_coverage  # Normalizza il reward globale per copertura spaziale    
                 
-                '''   
+            '''   
                 # reward globale per copertura spaziale tipo 2
                 self.spatial_coverage_total -= (1 - uav_coverage)
             for i in range(num_uav):
                 individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
-                '''
+            '''
 
             
         coverage_threshold = 0.95  # soglia di copertura spaziale per incentivare
@@ -728,7 +729,7 @@ class CruiseUAVWithMap(Cruise):
         balanced_exploration_incentive = 1 - np.mean(map_exploration)
         #exploration_incentive = explored_area_points_incentive
         exploration_incentive = explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive # teoricamente limitato a 1
-        self.exploration_incentive_total = exploration_incentive * num_uav
+        self.exploration_incentive_total = self.w_exploration * exploration_incentive * num_uav
         
         for i in range(num_uav):
             individual_rewards[i] += self.w_exploration * exploration_incentive

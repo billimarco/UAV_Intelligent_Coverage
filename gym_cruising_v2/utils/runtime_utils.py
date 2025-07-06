@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="ppo_vanilla",
+    parser.add_argument("--exp-name", type=str, default="1.4explorationw",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
