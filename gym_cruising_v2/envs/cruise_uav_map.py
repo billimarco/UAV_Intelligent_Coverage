@@ -28,7 +28,6 @@ class CruiseUAVWithMap(Cruise):
     disappear_gu_prob: float
 
     gu_covered = 0
-    max_gu_covered = 0
     max_theoretical_ground_uavs_points_coverage = 0
     max_theoretical_new_explored_ground_uavs_points = 0
     
@@ -36,12 +35,18 @@ class CruiseUAVWithMap(Cruise):
     collision_penalty_total = 0.0
     spatial_coverage_total = 0.0
     exploration_incentive_total = 0.0
+    homogenous_voronoi_partition_incentive_total = 0.0
     gu_coverage_total = 0.0
+    
+    exploration_phase = True
+    steps_gu_coverage_phase = 0
     
     #total_uavs_point_coverage = 0
     #simultaneous_uavs_points_coverage = 0
     uav_total_covered_points = []
     uav_shared_covered_points = []
+    
+    voronoi_partition = None
     
     last_unexplored_area_points: int
     new_explored_area_points: int
@@ -66,7 +71,12 @@ class CruiseUAVWithMap(Cruise):
         self.w_collision_penalty = args.w_collision_penalty
         self.w_spatial_coverage = args.w_spatial_coverage
         self.w_exploration = args.w_exploration
+        self.w_homogenous_voronoi_partition = args.w_homogenous_voronoi_partition
         self.w_gu_coverage = args.w_gu_coverage
+        
+        self.spatial_coverage_threshold = args.spatial_coverage_threshold
+        self.exploration_threshold = args.exploration_threshold
+        self.max_steps_gu_coverage_phase = args.max_steps_gu_coverage_phase
         
         self.theoretical_max_distance_before_possible_collision = 2*math.sqrt(self.max_speed_uav**2 + self.max_speed_uav**2) + self.collision_distance
 
@@ -148,7 +158,6 @@ class CruiseUAVWithMap(Cruise):
         #RAND
         #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
-        self.max_gu_covered = 0
         self.max_theoretical_ground_uavs_points_coverage = 0
         self.max_theoretical_new_explored_ground_uavs_points = 0
         
@@ -156,11 +165,18 @@ class CruiseUAVWithMap(Cruise):
         self.collision_penalty_total = 0.0
         self.spatial_coverage_total = 0.0
         self.exploration_incentive_total = 0.0
+        self.homogenous_voronoi_partition_incentive_total = 0.0
         self.gu_coverage_total = 0.0
+        
+        self.exploration_phase = True
+        self.steps_gu_coverage_phase = 0
+        
         #self.total_uavs_point_coverage = 0
         #self.simultaneous_uavs_points_coverage = 0
         self.uav_total_covered_points = []
         self.uav_shared_covered_points = []
+        
+        voronoi_partition = None
         
         self.available_gu_indexes = [False]*self.max_gu_number
         self.last_position_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
@@ -182,12 +198,17 @@ class CruiseUAVWithMap(Cruise):
         else:
             self.init_gu_clustered(options)
 
-        self.calculate_uav_area_max_coverage()
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
-        self.calculate_UAVs_connection_area_vectorized()
-        self.calculate_new_explored_area_points()
+        self.calculate_UAVs_connection_area_vectorized() # Calcolo della copertura della mappa di esplorazione
         self.check_connection_and_coverage_UAV_GU()
+        
+        if self.w_exploration > 0.0 or self.w_spatial_coverage > 0.0:
+            self.calculate_uav_area_max_coverage()
+        if self.w_exploration > 0.0:
+            self.calculate_new_explored_area_points()
+        if self.w_homogenous_voronoi_partition > 0.0:
+            self.calculate_voronoi_partition()
  
     def init_uav(self) -> None:
         area = self.np_random.choice(self.grid.spawn_area)
@@ -358,12 +379,17 @@ class CruiseUAVWithMap(Cruise):
         self.move_UAV(actions)
         self.update_GU()
         
-        self.calculate_uav_area_max_coverage()
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
-        self.calculate_UAVs_connection_area_vectorized()
-        self.calculate_new_explored_area_points()
+        self.calculate_UAVs_connection_area_vectorized() # Calcolo della copertura della mappa di esplorazione
         self.check_connection_and_coverage_UAV_GU()
+        
+        if self.w_exploration > 0.0 or self.w_spatial_coverage > 0.0:
+            self.calculate_uav_area_max_coverage()
+        if self.w_exploration > 0.0:
+            self.calculate_new_explored_area_points()
+        if self.w_homogenous_voronoi_partition > 0.0:
+            self.calculate_voronoi_partition()
 
     def update_GU(self):
         #RAND
@@ -460,7 +486,8 @@ class CruiseUAVWithMap(Cruise):
                 del copy_list[j]
                 current_GU_SINR.append(self.communication_channel.getSINR(current_pathLoss[j], copy_list))
             self.SINR.append(current_GU_SINR)
-
+               
+    
     def calculate_UAVs_connection_area_vectorized(self):
         # Calcola la distanza di copertura in Line-of-Sight (LoS) basata sul SINR e sulla soglia di copertura
         distance_LoS_coverage = self.communication_channel.get_distance_from_SINR_closed_form(
@@ -470,16 +497,9 @@ class CruiseUAVWithMap(Cruise):
         # Estrae le posizioni 3D di tutti gli UAV in un array NumPy (UAV, 3)
         uav_positions = np.array([uav.position.to_array_3d() for uav in self.uav])
 
-        point_refs = []
-        point_coords = []
-
-        # Raccoglie tutti i punti e le loro coordinate 3D direttamente dalla griglia di punti
-        for row in self.grid.point_grid:
-            for point in row:
-                point_refs.append(point)
-                point_coords.append(point.to_array_3d())
-
-        point_coords = np.array(point_coords)  # (Punti, 3)
+        # Flatten dei punti della griglia
+        point_grid_flat = [point for row in self.grid.point_grid for point in row]
+        point_coords = np.array([p.to_array_3d() for p in point_grid_flat])  # (P, 3)
 
         # Calcola le distanze euclidee al quadrato tra ogni punto e ogni UAV (matrice P x U)
         diffs = point_coords[:, None, :] - uav_positions[None, :, :]
@@ -491,18 +511,10 @@ class CruiseUAVWithMap(Cruise):
         # Conta quanti UAV coprono ciascun punto
         coverage_counts = np.sum(coverage_mask, axis=1)
 
-        # Inizializza liste per statistiche individuali di copertura
-        self.uav_total_covered_points = [0 for _ in range(len(self.uav))]
-        self.uav_shared_covered_points = [0 for _ in range(len(self.uav))]
+        # Statistiche per UAV
+        self.uav_total_covered_points = np.sum(coverage_mask, axis=0).tolist()
+        self.uav_shared_covered_points = np.sum(coverage_mask & (coverage_counts[:, None] > 1), axis=0).tolist()
 
-        # Per ogni UAV, calcola i punti coperti e quelli condivisi
-        for i in range(len(self.uav)):
-            uav_coverage = coverage_mask[:, i]  # punti coperti da questo UAV
-            total_covered_by_uav = sum(uav_coverage)
-            shared_covered_by_uav = sum(uav_coverage & (coverage_counts > 1))
-            
-            self.uav_total_covered_points[i] = total_covered_by_uav
-            self.uav_shared_covered_points[i] = shared_covered_by_uav
         
         '''
         # Inizializza le statistiche di copertura
@@ -510,17 +522,12 @@ class CruiseUAVWithMap(Cruise):
         simultaneous_coverage = 0
         '''
 
-        # Aggiorna lo stato di ogni punto sulla base del numero di UAV che lo coprono
-        for i, point in enumerate(point_refs):
-            count = coverage_counts[i]
-            if count > 0:
+        # Aggiorna stato dei punti
+        covered = coverage_counts > 0
+        for point, is_covered in zip(point_grid_flat, covered):
+            if is_covered:
                 point.set_covered(True)
                 point.reset_step_from_last_visit()
-                '''
-                total_coverage += count
-                if count > 1:
-                    simultaneous_coverage += count-1
-                '''
             else:
                 point.set_covered(False)
                 point.increment_step_from_last_visit()
@@ -531,11 +538,10 @@ class CruiseUAVWithMap(Cruise):
         self.simultaneous_uavs_points_coverage = simultaneous_coverage
         '''
 
-        # Aggiorna metriche per pixel solo se in modalità "human" (visualizzazione)
+        # Aggiorna visualizzazione solo se necessario
         if self.render_mode == "human":
-            for pixel_row in self.grid.pixel_grid:
-                for pixel in pixel_row:
-                    pixel.calculate_mean_step_from_last_visit()
+            for pixel in [p for row in self.grid.pixel_grid for p in row]:
+                pixel.calculate_mean_step_from_last_visit()
 
     
     def calculate_uav_area_max_coverage(self):
@@ -568,7 +574,7 @@ class CruiseUAVWithMap(Cruise):
             part3 = 0.5 * d * math.sqrt(4 * r**2 - d**2)
             overlap_area = 2 * part1 - part3
             return math.pi * r**2 - overlap_area
-    
+        
     def calculate_new_explored_area_points(self):
         map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
         
@@ -577,6 +583,33 @@ class CruiseUAVWithMap(Cruise):
         
         self.new_explored_area_points = self.last_unexplored_area_points - actual_num_unexplored_area_points
         self.last_unexplored_area_points = actual_num_unexplored_area_points
+        
+    def calculate_voronoi_partition(self):
+        """
+        Calcola la partizione di Voronoi per gli UAV in modo vettorializzato.
+        Restituisce una matrice 2D in cui ogni cella contiene l'indice dell'UAV più vicino.
+        """
+
+        # Ottieni le posizioni 2D degli UAV come array NumPy
+        points = np.array([uav.position.to_array_2d() for uav in self.uav])  # Shape: (N, 2)
+
+        # Crea una griglia di coordinate (meshgrid)
+        grid_x, grid_y = np.meshgrid(np.arange(self.grid.grid_width), np.arange(self.grid.grid_height))
+        grid_points = np.stack((grid_y, grid_x), axis=-1)  # Shape: (H, W, 2)
+
+        # Calcola le distanze Euclidee da ogni punto della griglia a ciascun UAV
+        # points[:, np.newaxis, np.newaxis, :] ha shape (N, 1, 1, 2)
+        # grid_points ha shape (H, W, 2)
+        # Differenza broadcasting: (N, H, W, 2)
+        diff = points[:, np.newaxis, np.newaxis, :] - grid_points
+        dists = np.linalg.norm(diff, axis=-1)  # Shape: (N, H, W)
+
+        # Trova per ogni cella della griglia l'indice dell'UAV più vicino
+        partition = np.argmin(dists, axis=0)  # Shape: (H, W)
+
+        # Salva la partizione
+        self.voronoi_partition = partition
+        
         
     def calculate_boundary_repulsive_potential(self, uav):
         """
@@ -655,91 +688,114 @@ class CruiseUAVWithMap(Cruise):
         individual_rewards = [0.0 for _ in range(self.max_uav_number)]
 
         # 1. Penalità per avvicinamento ai bordi e agli altri uav
-        self.boundary_penalty_total = 0
-        self.collision_penalty_total = 0
+        self.boundary_penalty_total = 0.0
+        self.collision_penalty_total = 0.0
         for i in range(num_uav):
-            boundary_penalty = self.calculate_boundary_repulsive_potential(self.uav[i])
-            self.boundary_penalty_total -= self.w_boundary_penalty * boundary_penalty
-            #afar_boundary_incentive = 1.0 - boundary_penalty
-            individual_rewards[i] -= self.w_boundary_penalty * boundary_penalty
+            if self.w_boundary_penalty > 0.0:
+                boundary_penalty = self.calculate_boundary_repulsive_potential(self.uav[i])
+                self.boundary_penalty_total -= self.w_boundary_penalty * boundary_penalty
+                #afar_boundary_incentive = 1.0 - boundary_penalty
+                individual_rewards[i] -= self.w_boundary_penalty * boundary_penalty
 
             # Collisioni
-            for j in range(i + 1, num_uav):
-                collision_penalty = self.calculate_uav_repulsive_potential(self.uav[i], self.uav[j])
-                #afar_collision_incentive = 1.0 - collision_penalty
-                self.collision_penalty_total -= 2 * self.w_collision_penalty * collision_penalty
-                individual_rewards[i] -= self.w_collision_penalty * collision_penalty
-                individual_rewards[j] -= self.w_collision_penalty * collision_penalty
+            if self.w_collision_penalty > 0.0:
+                for j in range(i + 1, num_uav):
+                    collision_penalty = self.calculate_uav_repulsive_potential(self.uav[i], self.uav[j])
+                    #afar_collision_incentive = 1.0 - collision_penalty
+                    self.collision_penalty_total -= 2 * self.w_collision_penalty * collision_penalty
+                    individual_rewards[i] -= self.w_collision_penalty * collision_penalty
+                    individual_rewards[j] -= self.w_collision_penalty * collision_penalty
         
         
 
         # 2. Copertura spaziale (evita UAV sovrapposti) - volendo potrebbe essere reward individuale se altezze uav fossero diverse
-        self.spatial_coverage_total = 0
+        self.spatial_coverage_total = 0.0
         if self.max_theoretical_ground_uavs_points_coverage > 0 and self.w_spatial_coverage > 0.0:
             for i in range(num_uav): 
                 uav_coverage = (self.uav_total_covered_points[i] - self.uav_shared_covered_points[i]) / int(self.max_theoretical_ground_uavs_points_coverage / num_uav)
+                '''
                 #reward individuale per copertura spaziale tipo 1
-                '''
-                if uav_coverage > 0.99:
-                    self.spatial_coverage_total += w_spatial * uav_coverage
-                    individual_rewards[i] += w_spatial * uav_coverage
+                if uav_coverage > self.spatial_coverage_threshold:
+                    self.spatial_coverage_total += 0
+                    individual_rewards[i] += 0
                 else:
-                    self.spatial_coverage_total -= w_spatial * (1 - uav_coverage)
-                    individual_rewards[i] -= w_spatial * (1 - uav_coverage)
-                '''
+                    self.spatial_coverage_total -= self.w_spatial_coverage * (1 - uav_coverage)
+                    individual_rewards[i] -= self.w_spatial_coverage * (1 - uav_coverage)
+                '''    
                 #reward individuale per copertura spaziale tipo 2
                 '''
                 self.spatial_coverage_total += w_spatial * uav_coverage
                 individual_rewards[i] += w_spatial * uav_coverage
                 '''
                 # reward globale per copertura spaziale tipo 1
-                
-                if uav_coverage > 0.90:
+            
+                if uav_coverage > self.spatial_coverage_threshold:
                     self.spatial_coverage_total += 0
                 else:
                     self.spatial_coverage_total -= (1 - uav_coverage)
             for i in range(num_uav):
-                individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
+                individual_rewards[i] += self.w_spatial_coverage * self.spatial_coverage_total / num_uav
             self.spatial_coverage_total *= self.w_spatial_coverage  # Normalizza il reward globale per copertura spaziale    
-                
+               
             '''   
                 # reward globale per copertura spaziale tipo 2
                 self.spatial_coverage_total -= (1 - uav_coverage)
             for i in range(num_uav):
                 individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
             '''
-
-            
-        coverage_threshold = 0.95  # soglia di copertura spaziale per incentivare
         
         # 3. Incentivo all'esplorazione (bassa densità di esplorazione)
-        
+        self.exploration_incentive_total = 0.0
         # Calcola il numero totale di celle
-        map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
-        total_area_points = self.grid.grid_width*self.grid.grid_height
+        if self.w_exploration > 0.0 and self.exploration_phase:
+            map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
+            total_area_points = self.grid.grid_width * self.grid.grid_height
 
-        num_explored_area_points = total_area_points - self.last_unexplored_area_points
-        
-        explored_area_points_incentive = num_explored_area_points / total_area_points if total_area_points > 0 else 0.0
+            num_explored_area_points = total_area_points - self.last_unexplored_area_points
+            
+            explored_area_points_incentive = num_explored_area_points / total_area_points if total_area_points > 0 else 0.0
 
-        new_explored_area_points_incentive = (1 - explored_area_points_incentive) * self.new_explored_area_points / self.max_theoretical_new_explored_ground_uavs_points # incentivo per esplorazione efficaciemente distribuita
+            new_explored_area_points_incentive = (1 - explored_area_points_incentive) * self.new_explored_area_points / self.max_theoretical_new_explored_ground_uavs_points # incentivo per esplorazione efficaciemente distribuita
+            
+            balanced_exploration_incentive = 1 - np.mean(map_exploration)
+            
+            exploration_incentive = (explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive) / 2
+            
+            # Controllo per vedere se si è passati alla fase di copertura
+            if exploration_incentive >= self.exploration_threshold:
+                self.exploration_phase = False
+                self.steps_gu_coverage_phase = self.max_steps_gu_coverage_phase
+            else:
+                self.exploration_incentive_total = self.w_exploration * exploration_incentive * num_uav
+                for i in range(num_uav):
+                    individual_rewards[i] += self.w_exploration * exploration_incentive
+
+
+        # 4. Incentivo per partizione di voronoi omogenea.
+        self.homogenous_voronoi_partition_incentive_total = 0.0
+        # Calcola il numero ideale di punti per UAV in una partizione equa
+        if self.w_homogenous_voronoi_partition > 0.0:
+            counts = np.bincount(self.voronoi_partition.flatten(), minlength=num_uav)
+            ideal_area_points = total_area_points / num_uav
+            
+            # Deviazione assoluta media
+            mad = np.mean(np.abs(counts - ideal_area_points))
+
+            # Normalizzazione: massimo possibile MAD = total_area_points * (1 - 1/num_uav)
+            max_mad = total_area_points * (1 - 1 / num_uav)
+
+            # Normalizzazione: 0 = perfetta, -1 = perfetta
+            homogenous_voronoi_partition_incentive = -(mad / max_mad)
+            homogenous_voronoi_partition_incentive = np.clip(homogenous_voronoi_partition_incentive, -1, 0)
+
+            self.homogenous_voronoi_partition_incentive_total = self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive * num_uav
+            
+            for i in range(num_uav):
+                individual_rewards[i] += self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive
         
-        
-        
-        balanced_exploration_incentive = 1 - np.mean(map_exploration)
-        #exploration_incentive = explored_area_points_incentive
-        exploration_incentive = explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive # teoricamente limitato a 1
-        self.exploration_incentive_total = self.w_exploration * exploration_incentive * num_uav
-        
-        for i in range(num_uav):
-            individual_rewards[i] += self.w_exploration * exploration_incentive
-        
-        exploration_threshold = 0.6
-        
-        # TODO Potrebbe essere un idea mettere dei booleani in self per indicare se siamo in fase esplorativa o in fase di copertura
-        
-        # 4. Copertura dei GU massima
+        # 5. Copertura dei GU massima
         self.gu_coverage_total = 0
+        
         contributions = [
             max(0.0, self.gu_covered - self.calculate_RCR_without_uav_i(i))
             for i in range(len(self.uav))
@@ -751,10 +807,13 @@ class CruiseUAVWithMap(Cruise):
             proportions = [1.0 / num_uav] * num_uav
             
             
-        if exploration_incentive >= exploration_threshold:
-            coverage_score = self.gu_covered / self.max_gu_covered if self.max_gu_covered > 0 else 0.0
+        if self.steps_gu_coverage_phase > 0 and not self.exploration_phase:
+            coverage_score = self.w_exploration + (self.gu_covered / np.sum(self.gu_mask)) if np.sum(self.gu_mask) > 0 else 0.0
+            self.steps_gu_coverage_phase -= 1
+            if self.steps_gu_coverage_phase == 0:
+                self.exploration_phase = True
         else:
-            coverage_score = 0.0  # ignoriamo copertura se la mappa è troppo inesplorata
+            coverage_score = 0.0
         gu_coverage = self.w_gu_coverage * coverage_score
         
         '''
@@ -947,6 +1006,7 @@ class CruiseUAVWithMap(Cruise):
                 "collision_penalty_total": self.collision_penalty_total,
                 "spatial_coverage_total": self.spatial_coverage_total,
                 "exploration_incentive_total": self.exploration_incentive_total,
+                "homogenous_voronoi_partition_incentive_total": self.homogenous_voronoi_partition_incentive_total,
                 "gu_coverage_total": self.gu_coverage_total}
             
         return {"GU coperti": str(self.gu_covered), "Ground Users": str(

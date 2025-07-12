@@ -175,6 +175,7 @@ def test(agent, num_episodes=32, global_step=0):
     collision_penalty_rewards = []
     spatial_coverage_rewards = []
     exploration_incentive_rewards = []
+    homogenous_voronoi_partition_incentive_rewards = []
     gu_coverage_rewards = []
     
     for ep in range(num_episodes):
@@ -195,6 +196,7 @@ def test(agent, num_episodes=32, global_step=0):
         sum_collision_penalty_total = 0
         sum_spatial_coverage_total = 0
         sum_exploration_incentive_total = 0
+        sum_homogenous_voronoi_partition_incentive_total = 0
         sum_gu_coverage_total = 0
         sum_rcr = 0
         sum_out_area = 0
@@ -245,6 +247,7 @@ def test(agent, num_episodes=32, global_step=0):
             sum_collision_penalty_total += info["collision_penalty_total"]
             sum_spatial_coverage_total += info["spatial_coverage_total"]
             sum_exploration_incentive_total += info["exploration_incentive_total"]
+            sum_homogenous_voronoi_partition_incentive_total += info["homogenous_voronoi_partition_incentive_total"]
             sum_gu_coverage_total += info["gu_coverage_total"]
             
             state = next_state
@@ -268,11 +271,12 @@ def test(agent, num_episodes=32, global_step=0):
         collision_penalty_rewards.append(sum_collision_penalty_total)
         spatial_coverage_rewards.append(sum_spatial_coverage_total)
         exploration_incentive_rewards.append(sum_exploration_incentive_total)
+        homogenous_voronoi_partition_incentive_rewards.append(sum_homogenous_voronoi_partition_incentive_total)
         gu_coverage_rewards.append(sum_gu_coverage_total)
         
         print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_areas = {sum_out_area}, collisions = {sum_collision},\n"
               f"boundary_penalty_total = {sum_boundary_penalty_total:.2f}, collision_penalty_total = {sum_collision_penalty_total:.2f}, spatial_coverage_total = {sum_spatial_coverage_total:.2f},\n"
-              f"exploration_incentive_total = {sum_exploration_incentive_total:.2f}, gu_coverage_total = {sum_gu_coverage_total:.2f}\n")
+              f"exploration_incentive_total = {sum_exploration_incentive_total:.2f}, homogenous_voronoi_partition_incentive_total = {sum_homogenous_voronoi_partition_incentive_total:.2f}, gu_coverage_total = {sum_gu_coverage_total:.2f}\n")
 
     # Statistiche
     mean_steps = np.mean(steps_vec)
@@ -287,6 +291,7 @@ def test(agent, num_episodes=32, global_step=0):
     mean_collision_penalty = np.mean(collision_penalty_rewards)
     mean_spatial_coverage = np.mean(spatial_coverage_rewards)
     mean_exploration_incentive = np.mean(exploration_incentive_rewards)
+    mean_homogenous_voronoi_partition_incentive = np.mean(homogenous_voronoi_partition_incentive_rewards)
     mean_gu_coverage = np.mean(gu_coverage_rewards)
 
     print(f"\nTest completed over {num_episodes} episodes.")
@@ -299,6 +304,7 @@ def test(agent, num_episodes=32, global_step=0):
     print(f"Average Collision Penalty: {mean_collision_penalty:.2f}")
     print(f"Average Spatial Coverage: {mean_spatial_coverage:.2f}")
     print(f"Average Exploration Incentive: {mean_exploration_incentive:.2f}")
+    print(f"Average Homogenous Voronoi Partition Penalty: {mean_homogenous_voronoi_partition_incentive:.2f}")
     print(f"Average GU Coverage: {mean_gu_coverage:.2f}")
 
     # Logging su Weights & Biases
@@ -315,6 +321,7 @@ def test(agent, num_episodes=32, global_step=0):
             "test/mean_collision_penalty": mean_collision_penalty,
             "test/mean_spatial_coverage": mean_spatial_coverage,
             "test/mean_exploration_incentive": mean_exploration_incentive,
+            "test/mean_homogenous_voronoi_partition_incentive": mean_homogenous_voronoi_partition_incentive,
             "test/mean_gu_coverage": mean_gu_coverage,
         }, step=global_step)
 
@@ -366,6 +373,7 @@ if __name__ == "__main__":
             wandb.define_metric("test/mean_collision_penalty", step_metric="global_step")
             wandb.define_metric("test/mean_spatial_coverage", step_metric="global_step")
             wandb.define_metric("test/mean_exploration_incentive", step_metric="global_step")
+            wandb.define_metric("test/mean_homogenous_voronoi_partition_incentive", step_metric="global_step")
             wandb.define_metric("test/mean_gu_coverage", step_metric="global_step")
             
             wandb.define_metric("losses/value_loss", step_metric="global_step")

@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="1.4explorationw",
+    parser.add_argument("--exp-name", type=str, default="exp+cov2---1gucoverageround",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -131,17 +131,25 @@ def parse_args():
                         help="Weight for encouraging UAVs to cover as much area as possible")
     parser.add_argument("--w-exploration", type=float, default=1.0,
                         help="Weight for encouraging UAVs to explore new or less-visited areas")
-    parser.add_argument("--w-gu-coverage", type=float, default=0.0,
+    parser.add_argument("--w-homogenous-voronoi-partition", type=float, default=0.0,
+                        help="Weight for encouraging a homogenous Voronoi partition among UAVs")
+    parser.add_argument("--w-gu-coverage", type=float, default=1.0,
                         help="Weight for encouraging UAVs to cover ground user (GU) positions")
+    
+    parser.add_argument("--spatial-coverage-threshold", type=float, default=0.90,
+                    help="Minimum percentage of the maximum theoretical points a UAV must cover to avoid a penalty.")
+    parser.add_argument("--exploration-threshold", type=float, default=0.92,
+                        help="Coverage percentage at which the system switches from exploration to coverage phase.")
+    parser.add_argument("--max-steps-gu-coverage-phase", type=int, default=500,
+                        help="Maximum number of steps in the coverage phase before switching back to exploration.")
 
-    
-    
+
     # PPO specific arguments
     parser.add_argument("--num-envs", type=int, default=16,
                         help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128,
                         help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--updates", type=int, default=200,
+    parser.add_argument("--updates", type=int, default=400,
                         help="the number of updates (rollout + training)")
     parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="Use GAE for advantage computation")
