@@ -75,7 +75,8 @@ class CruiseUAVWithMap(Cruise):
         self.w_gu_coverage = args.w_gu_coverage
         
         self.spatial_coverage_threshold = args.spatial_coverage_threshold
-        self.exploration_threshold = args.exploration_threshold
+        self.exhaustive_exploration_threshold = args.exhaustive_exploration_threshold
+        self.balanced_exploration_threshold = args.balanced_exploration_threshold
         self.max_steps_gu_coverage_phase = args.max_steps_gu_coverage_phase
         
         self.theoretical_max_distance_before_possible_collision = 2*math.sqrt(self.max_speed_uav**2 + self.max_speed_uav**2) + self.collision_distance
@@ -762,7 +763,7 @@ class CruiseUAVWithMap(Cruise):
             exploration_incentive = (explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive) / 2
             
             # Controllo per vedere se si è passati alla fase di copertura
-            if exploration_incentive >= self.exploration_threshold:
+            if explored_area_points_incentive >= self.exhaustive_exploration_threshold and balanced_exploration_incentive >= self.balanced_exploration_threshold:
                 self.exploration_phase = False
                 self.steps_gu_coverage_phase = self.max_steps_gu_coverage_phase
             else:

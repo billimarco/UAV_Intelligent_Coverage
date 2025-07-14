@@ -151,7 +151,7 @@ def get_set_up():
         options = get_uniform_options()
     ''' 
     options = {
-        "uav": args.max_uav_number,
+        "uav": args.uav_number,
         "gu": args.starting_gu_number,
         "clustered": args.clustered,
         "clusters_number": args.clusters_number,
@@ -180,7 +180,7 @@ def test(agent, num_episodes=32, global_step=0):
     
     for ep in range(num_episodes):
         options = {
-            "uav": args.max_uav_number,
+            "uav": args.uav_number,
             "gu": args.starting_gu_number,
             "clustered": args.clustered,
             "clusters_number": args.clusters_number,

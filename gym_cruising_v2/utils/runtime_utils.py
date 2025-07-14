@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="exp+cov2---1gucoverageround",
+    parser.add_argument("--exp-name", type=str, default="exp+cov2---2UAV",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -49,9 +49,9 @@ def parse_args():
     
     
     # UAV specific arguments
-    parser.add_argument("--max-uav-number", type=int, default=3,
+    parser.add_argument("--max-uav-number", type=int, default=2,
                         help="the max number of UAVs in the environment")
-    parser.add_argument("--uav-number", type=int, default=3,
+    parser.add_argument("--uav-number", type=int, default=2,
                         help="the number of UAVs in the environment (not more than max-uav-number)")
     parser.add_argument("--max-speed-uav", type=float, default=50.0,
                         help="maximum speed in a single direction of an UAV in meters per second")
@@ -124,7 +124,7 @@ def parse_args():
     
     # Reward specific arguments
     parser.add_argument("--w-boundary-penalty", type=float, default=0.0,
-                    help="Weight applied to the penalty when UAVs exceed the environment boundaries")
+                        help="Weight applied to the penalty when UAVs exceed the environment boundaries")
     parser.add_argument("--w-collision-penalty", type=float, default=0.0,
                         help="Weight applied to the penalty for collisions between UAVs")
     parser.add_argument("--w-spatial-coverage", type=float, default=1.0,
@@ -137,10 +137,12 @@ def parse_args():
                         help="Weight for encouraging UAVs to cover ground user (GU) positions")
     
     parser.add_argument("--spatial-coverage-threshold", type=float, default=0.90,
-                    help="Minimum percentage of the maximum theoretical points a UAV must cover to avoid a penalty.")
-    parser.add_argument("--exploration-threshold", type=float, default=0.92,
-                        help="Coverage percentage at which the system switches from exploration to coverage phase.")
-    parser.add_argument("--max-steps-gu-coverage-phase", type=int, default=500,
+                        help="Minimum percentage of the maximum theoretical points a UAV must cover to avoid a penalty.")
+    parser.add_argument("--exhaustive-exploration-threshold", type=float, default=0.95,
+                        help="Coverage threshold at which the system transitions from exhaustive exploration to the coverage phase.")
+    parser.add_argument("--balanced-exploration-threshold", type=float, default=0.60,
+                        help="Coverage threshold at which the system transitions from balanced exploration to the coverage phase.")
+    parser.add_argument("--max-steps-gu-coverage-phase", type=int, default=50,
                         help="Maximum number of steps in the coverage phase before switching back to exploration.")
 
 
