@@ -400,24 +400,21 @@ class CruiseUAVWithMap(Cruise):
         #self.check_if_disappear_GU()
 
     def move_UAV(self, actions):
-        real_actions = actions["uav_moves"][actions["uav_mask"]]
+        active_actions = actions["uav_moves"][actions["uav_mask"]]
         
         # Movimento in un cerchio 2D con valori limitati da [-self.max_speed_uav, self.max_speed_uav]
         # Limita i vettori al cerchio unitario
-        norms = np.linalg.norm(real_actions, axis=1, keepdims=True)
+        norms = np.linalg.norm(active_actions, axis=1, keepdims=True)
         norms = np.maximum(norms, 1.0)  # Se <=1 lascia invariato, se >1 normalizza
-        clipped_actions = real_actions / norms
+        clipped_actions = active_actions / norms
 
         # Scala al massimo raggio
-        actions = self.max_speed_uav * clipped_actions
-        '''
-        # Movimento in un quadrato 2D con valori per dimensione da [-self.max_speed_uav, self.max_speed_uav]  
-        actions = self.max_speed_uav * real_actions
-        '''
+        real_actions = self.max_speed_uav * clipped_actions
+        
         for i, uav in enumerate(self.uav):
-            uav.position = Coordinate(uav.position.x_coordinate + actions[i][0], uav.position.y_coordinate + actions[i][1], self.uav_altitude)
-            uav.last_shift_x = actions[i][0]
-            uav.last_shift_y = actions[i][1]
+            uav.position = Coordinate(uav.position.x_coordinate + real_actions[i][0], uav.position.y_coordinate + real_actions[i][1], self.uav_altitude)
+            uav.last_shift_x = real_actions[i][0]
+            uav.last_shift_y = real_actions[i][1]
 
     def move_GU(self):
         area = self.np_random.choice(self.grid.available_area)

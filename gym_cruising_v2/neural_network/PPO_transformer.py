@@ -61,7 +61,7 @@ class PPOTransformer(nn.Module):
 
         gu_tokens = self.norm_gu(self.gu_proj(GU_positions))    # [B, G, D]
         
-        map_feat = self.map_patch_proj(map_exploration.unsqueeze(1))    # [B, embed_dim, map_size[0]/patch_size, map_size[1]/patch_size]
+        map_feat = self.map_patch_proj(map_exploration.unsqueeze(1))    # [B, embed_dim, map_size[0]/patch_size, map_size[1]/patch_size] --- unsqueeze(1) = [B,H,W] → [B,1,H,W]
         map_feat = map_feat.flatten(2).transpose(1, 2)            # [B, N, embed_dim] — N = num_patches
         map_feat += self.map_pos_embedding  # Aggiungi positional encoding
         map_tokens = self.norm_map(map_feat)       # [B, N, D]

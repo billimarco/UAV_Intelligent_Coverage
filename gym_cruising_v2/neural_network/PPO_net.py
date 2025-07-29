@@ -26,6 +26,7 @@ class PPONet(nn.Module):
         Inoltra i dati nella rete PPO completa: backbone, actor, critic.
 
         Args:
+            map_exploration: (B, H, W) - Mappa di esplorazione
             uav_input: (B, U, uav_dim)
             gu_input: (B, G, gu_dim)
             uav_flags: (B, U)
