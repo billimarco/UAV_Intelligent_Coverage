@@ -83,7 +83,6 @@ def compute_gae(rewards, values, dones, last_values):
 
     return advantages, returns
 
-
 def process_state_batch(state_batch):
     """
     Processa un batch di stati (lista di dict), convertendo i campi in tensori e
@@ -391,8 +390,8 @@ if __name__ == "__main__":
         #env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
         
         # Path al file dei pesi
-        model_path = os.path.join(project_root, "neural_network", "PPO.pth")
-        model_path_test = os.path.join(project_root, "neural_network", "PPO_test.pth")
+        model_path = os.path.join(project_root, "neural_network", f"{args.exp_name}.pth")
+        model_path_test = os.path.join(project_root, "neural_network", f"{args.exp_name}_test.pth")
         ppo_net = PPONet(embed_dim=args.embedded_dim, max_uav_number=args.max_uav_number, map_size=(args.window_height*args.resolution, args.window_width*args.resolution), patch_size=args.patch_size, global_value=args.global_value).to(device)
         
         args.seed = int(time.perf_counter())
@@ -682,7 +681,7 @@ if __name__ == "__main__":
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         # Path al file dei pesi
-        model_path = os.path.join(project_root, "neural_network", "PPO_new.pth")
+        model_path = os.path.join(project_root, "neural_network", f"{args.exp_name}.pth")
         ppo_net.load_state_dict(torch.load(model_path, map_location='cuda:0'))
 
         test(ppo_net, 1, 0)
@@ -693,7 +692,7 @@ if __name__ == "__main__":
         # Ottieni il percorso assoluto della root del progetto, basato su questo file
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         # Path al file dei pesi
-        model_path = os.path.join(project_root, "neural_network", "PPO.pth")
+        model_path = os.path.join(project_root, "neural_network", f"{args.exp_name}.pth")
         ppo_net.load_state_dict(torch.load(model_path))
 
         # Test the trained model

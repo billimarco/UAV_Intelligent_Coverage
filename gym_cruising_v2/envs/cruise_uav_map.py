@@ -74,10 +74,12 @@ class CruiseUAVWithMap(Cruise):
         self.w_homogenous_voronoi_partition = args.w_homogenous_voronoi_partition
         self.w_gu_coverage = args.w_gu_coverage
         
+        self.reward_mode = args.reward_mode
         self.spatial_coverage_threshold = args.spatial_coverage_threshold
         self.exhaustive_exploration_threshold = args.exhaustive_exploration_threshold
         self.balanced_exploration_threshold = args.balanced_exploration_threshold
         self.max_steps_gu_coverage_phase = args.max_steps_gu_coverage_phase
+        self.k_factor = args.k_factor
         
         self.theoretical_max_distance_before_possible_collision = 2*math.sqrt(self.max_speed_uav**2 + self.max_speed_uav**2) + self.collision_distance
 
@@ -623,7 +625,7 @@ class CruiseUAVWithMap(Cruise):
         Returns:
             float: penalità tra 0 (lontano dai bordi) e 1 (sul bordo).
         """
-        penalty = -1
+        penalty = 0
         h = uav.position.z_coordinate
         R = self.communication_channel.get_distance_from_SINR_closed_form(self.covered_threshold, 0)
 
@@ -666,7 +668,7 @@ class CruiseUAVWithMap(Cruise):
         min_dist = margin_i + margin_j # or self.theoretical_max_distance_before_possible_collision
         
         if uav_distance > min_dist:
-            penalty = -1.0
+            penalty = 0.0
         elif uav_distance <= self.collision_distance:
             penalty = 1.0  # Penalità massima
         else:
@@ -760,19 +762,26 @@ class CruiseUAVWithMap(Cruise):
             exploration_incentive = (explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive) / 2
             
             # Controllo per vedere se si è passati alla fase di copertura
-            if explored_area_points_incentive >= self.exhaustive_exploration_threshold and balanced_exploration_incentive >= self.balanced_exploration_threshold:
-                self.exploration_phase = False
-                self.steps_gu_coverage_phase = self.max_steps_gu_coverage_phase
-            else:
+            if self.reward_mode == "twophases": 
+                if explored_area_points_incentive >= self.exhaustive_exploration_threshold and balanced_exploration_incentive >= self.balanced_exploration_threshold:
+                    self.exploration_phase = False
+                    self.steps_gu_coverage_phase = self.max_steps_gu_coverage_phase
+                else:
+                    self.exploration_incentive_total = self.w_exploration * exploration_incentive * num_uav
+                    for i in range(num_uav):
+                        individual_rewards[i] += self.w_exploration * exploration_incentive
+            elif self.reward_mode == "mixed":
                 self.exploration_incentive_total = self.w_exploration * exploration_incentive * num_uav
                 for i in range(num_uav):
                     individual_rewards[i] += self.w_exploration * exploration_incentive
+            
+                
 
 
         # 4. Incentivo per partizione di voronoi omogenea.
         self.homogenous_voronoi_partition_incentive_total = 0.0
         # Calcola il numero ideale di punti per UAV in una partizione equa
-        if self.w_homogenous_voronoi_partition > 0.0:
+        if self.w_homogenous_voronoi_partition > 0.0 and self.exploration_phase:
             counts = np.bincount(self.voronoi_partition.flatten(), minlength=num_uav)
             ideal_area_points = total_area_points / num_uav
             
@@ -780,7 +789,7 @@ class CruiseUAVWithMap(Cruise):
             mad = np.mean(np.abs(counts - ideal_area_points))
 
             # Normalizzazione: massimo possibile MAD = total_area_points * (1 - 1/num_uav)
-            max_mad = total_area_points * (1 - 1 / num_uav)
+            max_mad = ideal_area_points * (1 - 1 / num_uav)
 
             # Normalizzazione: 0 = perfetta, -1 = perfetta
             homogenous_voronoi_partition_incentive = -(mad / max_mad)
@@ -794,6 +803,7 @@ class CruiseUAVWithMap(Cruise):
         # 5. Copertura dei GU massima
         self.gu_coverage_total = 0
         
+        '''
         contributions = [
             max(0.0, self.gu_covered - self.calculate_RCR_without_uav_i(i))
             for i in range(len(self.uav))
@@ -803,16 +813,25 @@ class CruiseUAVWithMap(Cruise):
             proportions = [c / sum_contributions for c in contributions]
         else:
             proportions = [1.0 / num_uav] * num_uav
+        '''    
+        if self.reward_mode == "twophases":    
+            if self.steps_gu_coverage_phase > 0 and not self.exploration_phase:
+                coverage_score = self.w_exploration + (self.gu_covered / np.sum(self.gu_mask)) if np.sum(self.gu_mask) > 0 else 0.0
+                self.steps_gu_coverage_phase -= 1
+                if self.steps_gu_coverage_phase == 0:
+                    self.exploration_phase = True
+            else:
+                coverage_score = 0.0
+        elif self.reward_mode == "mixed":
+            tradeoff_factor = np.exp(self.k_factor * exploration_incentive)-1 # e^(kx)-1 -> altre possibilità: (e^(kx)-1)/(e^k-1)
+            coverage_score = tradeoff_factor * (self.gu_covered / np.sum(self.gu_mask)) if np.sum(self.gu_mask) > 0 else 0.0
             
-            
-        if self.steps_gu_coverage_phase > 0 and not self.exploration_phase:
-            coverage_score = self.w_exploration + (self.gu_covered / np.sum(self.gu_mask)) if np.sum(self.gu_mask) > 0 else 0.0
-            self.steps_gu_coverage_phase -= 1
-            if self.steps_gu_coverage_phase == 0:
-                self.exploration_phase = True
-        else:
-            coverage_score = 0.0
         gu_coverage = self.w_gu_coverage * coverage_score
+        
+        # Reward globale per copertura GU
+        for i in range(num_uav):
+            individual_rewards[i] += gu_coverage
+            self.gu_coverage_total += gu_coverage
         
         '''
         # Reward individuale per copertura GU
@@ -820,11 +839,6 @@ class CruiseUAVWithMap(Cruise):
             individual_rewards[i] += (proportions[i] * gu_coverage) * num_uav
             self.gu_coverage_total += (proportions[i] * gu_coverage) * num_uav
         '''    
-        
-        # Reward globale per copertura GU
-        for i in range(num_uav):
-            individual_rewards[i] += gu_coverage
-            self.gu_coverage_total += gu_coverage
         
         #5. Penalità per UAV terminati
         '''
