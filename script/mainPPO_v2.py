@@ -332,6 +332,7 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
     '''
+    torch.autograd.set_detect_anomaly(True) # Backward con NaN debug
     
     # Ottieni il percorso assoluto della root del progetto, basato su questo file
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

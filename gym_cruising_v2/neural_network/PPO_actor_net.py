@@ -40,7 +40,7 @@ class ActorHead(nn.Module):
 
         # Inizializza i tensori di output
         mean = torch.zeros(B * U, 2, device=token.device)
-        std = torch.ones(B * U, 2, device=token.device) * 1e-6
+        std = torch.ones(B * U, 2, device=token.device) * 1e-5
 
         # Inserisci i valori calcolati solo dove necessario
         mean[mask_flat] = mean_valid
@@ -118,7 +118,7 @@ class ActorHead(nn.Module):
 
                 # Inizializza tensori output
                 mean = torch.zeros(B * U, self.action_dim, device=token.device)
-                std = torch.ones(B * U, self.action_dim, device=token.device) * 1e-6
+                std = torch.ones(B * U, self.action_dim, device=token.device) * 1e-5
 
                 mean[mask_flat] = mean_valid
                 std[mask_flat] = std_valid

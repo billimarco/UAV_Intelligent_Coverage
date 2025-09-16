@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="mixed---2UAV",
+    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -17,7 +17,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=1,
+    parser.add_argument("--cuda-device", type=int, default=0,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -49,9 +49,9 @@ def parse_args():
     
     
     # UAV specific arguments
-    parser.add_argument("--max-uav-number", type=int, default=2,
+    parser.add_argument("--max-uav-number", type=int, default=3,
                         help="the max number of UAVs in the environment")
-    parser.add_argument("--uav-number", type=int, default=2,
+    parser.add_argument("--uav-number", type=int, default=3,
                         help="the number of UAVs in the environment (not more than max-uav-number)")
     parser.add_argument("--max-speed-uav", type=float, default=50.0,
                         help="maximum speed in a single direction of an UAV in meters per second")
@@ -146,7 +146,9 @@ def parse_args():
                         help="If reward_mode = twophases, Coverage threshold at which the system transitions from balanced exploration to the coverage phase.")
     parser.add_argument("--max-steps-gu-coverage-phase", type=int, default=50,
                         help="If reward_mode = twophases, Maximum number of steps in the coverage phase before switching back to exploration.")
-    parser.add_argument("--k-factor", type=float, default=1.00,
+    parser.add_argument("--tradeoff-mode", type=str, default="exponential_norm", nargs="?", const="exponential",
+                        help="If reward_mode = mixed, tradeoff mode between exploration and GU coverage (e.g., exponential [e^(kx)-1], exponential_norm [(e^(kx)-1)/(e^k-1)], power_law [x^k]). If not selected is linear [x]")
+    parser.add_argument("--k-factor", type=float, default=2.00,
                         help="If reward_mode = mixed, k-factor is used to balance between exploration and GU coverage reward components. A higher value increases the weight of the exponential growth term relative to the base reward. This remains static.")
 
 

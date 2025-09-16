@@ -79,6 +79,7 @@ class CruiseUAVWithMap(Cruise):
         self.exhaustive_exploration_threshold = args.exhaustive_exploration_threshold
         self.balanced_exploration_threshold = args.balanced_exploration_threshold
         self.max_steps_gu_coverage_phase = args.max_steps_gu_coverage_phase
+        self.tradeoff_mode = args.tradeoff_mode
         self.k_factor = args.k_factor
         
         self.theoretical_max_distance_before_possible_collision = 2*math.sqrt(self.max_speed_uav**2 + self.max_speed_uav**2) + self.collision_distance
@@ -759,10 +760,9 @@ class CruiseUAVWithMap(Cruise):
             
             balanced_exploration_incentive = 1 - np.mean(map_exploration)
             
-            exploration_incentive = (explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive) / 2
-            
             # Controllo per vedere se si è passati alla fase di copertura
-            if self.reward_mode == "twophases": 
+            if self.reward_mode == "twophases":
+                exploration_incentive = (explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive) / 2 
                 if explored_area_points_incentive >= self.exhaustive_exploration_threshold and balanced_exploration_incentive >= self.balanced_exploration_threshold:
                     self.exploration_phase = False
                     self.steps_gu_coverage_phase = self.max_steps_gu_coverage_phase
@@ -771,6 +771,7 @@ class CruiseUAVWithMap(Cruise):
                     for i in range(num_uav):
                         individual_rewards[i] += self.w_exploration * exploration_incentive
             elif self.reward_mode == "mixed":
+                exploration_incentive = (balanced_exploration_incentive)
                 self.exploration_incentive_total = self.w_exploration * exploration_incentive * num_uav
                 for i in range(num_uav):
                     individual_rewards[i] += self.w_exploration * exploration_incentive
@@ -823,7 +824,14 @@ class CruiseUAVWithMap(Cruise):
             else:
                 coverage_score = 0.0
         elif self.reward_mode == "mixed":
-            tradeoff_factor = np.exp(self.k_factor * exploration_incentive)-1 # e^(kx)-1 -> altre possibilità: (e^(kx)-1)/(e^k-1)
+            if self.tradeoff_mode=="exponential":
+                tradeoff_factor = np.exp(self.k_factor * exploration_incentive)-1 # e^(kx)-1
+            elif self.tradeoff_mode=="exponential_norm":
+                tradeoff_factor = (np.exp(self.k_factor * exploration_incentive)-1)/(np.exp(self.k_factor)-1) # (e^(kx)-1)/(e^k-1)
+            elif self.tradeoff_mode=="power_law":
+                tradeoff_factor = math.pow(exploration_incentive, self.k_factor) # x^k
+            else:
+                tradeoff_factor = exploration_incentive
             coverage_score = tradeoff_factor * (self.gu_covered / np.sum(self.gu_mask)) if np.sum(self.gu_mask) > 0 else 0.0
             
         gu_coverage = self.w_gu_coverage * coverage_score

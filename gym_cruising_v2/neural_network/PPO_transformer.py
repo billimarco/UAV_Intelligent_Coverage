@@ -23,10 +23,10 @@ class PPOTransformer(nn.Module):
         self.type_embedding = nn.Embedding(2, embed_dim)
 
         # Normalizzazioni
-        self.norm_uav = nn.LayerNorm(embed_dim, eps=1e-6, elementwise_affine=True)
-        self.norm_gu = nn.LayerNorm(embed_dim, eps=1e-6, elementwise_affine=True)
-        self.norm_map = nn.LayerNorm(embed_dim, eps=1e-6, elementwise_affine=True)
-        self.layernorm_output = nn.LayerNorm(embed_dim, eps=1e-6, elementwise_affine=True)
+        self.norm_uav = nn.LayerNorm(embed_dim, eps=1e-5, elementwise_affine=True)
+        self.norm_gu = nn.LayerNorm(embed_dim, eps=1e-5, elementwise_affine=True)
+        self.norm_map = nn.LayerNorm(embed_dim, eps=1e-5, elementwise_affine=True)
+        self.layernorm_output = nn.LayerNorm(embed_dim, eps=1e-5, elementwise_affine=True)
 
         self.transformer_encoder_decoder = nn.Transformer(d_model=embed_dim, batch_first=True, num_encoder_layers=2, num_decoder_layers=2)
         
