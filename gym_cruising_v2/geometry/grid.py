@@ -21,10 +21,10 @@ class Grid:
         resolution (int): Numero di punti per pixel in entrambe le direzioni.
         grid_width (int): Numero di point in larghezza.
         grid_height (int): Numero di point in altezza.
-        spawn_offset (int): Offset per la zona di spawn in unità di point.
+        uav_spawn_offset (int): UAV offset per la zona di spawn in unità di point.
+        gu_spawn_offset (int): GU offset per la zona di spawn in unità di point.
         pixel_grid (List[List[Pixel]]): Griglia 2D di oggetti Pixel indicizzati come pixel_grid[riga][colonna].
         point_grid (List[List[Point]]): Griglia 2D di oggetti Point indicizzati come point_grid[riga][colonna].
-        walls (Tuple[Line, ...]): Tuple di linee che rappresentano i muri (non implementata).
     """
 
     window_width: int
@@ -32,15 +32,16 @@ class Grid:
     resolution: int
     grid_width: int
     grid_height: int
-    spawn_offset: int
+    uav_spawn_offset: int
+    gu_spawn_offset: int
     pixel_grid: List[List[Pixel]]
-    walls: Tuple[Line, ...]
 
     def __init__(self,
                  window_width: int,
                  window_height: int,
                  resolution: int,
-                 spawn_offset: int,
+                 uav_spawn_offset: int,
+                 gu_spawn_offset: int,
                  unexplored_point_max_steps: int,
                  render_mode: str):
         """
@@ -50,7 +51,8 @@ class Grid:
             window_width (int): Numero di pixel in larghezza.
             window_height (int): Numero di pixel in altezza.
             resolution (int): Numero di punti per pixel (griglia interna).
-            spawn_offset (int): Offset per la zona di spawn, in point.
+            uav_spawn_offset (int): UAV offset per la zona di spawn, in point.
+            gu_spawn_offset (int): GU offset per la zona di spawn, in point.
             unexplored_point_max_steps (int): Valore massimo di passi per punti inesplorati.
             render_mode (str): modalità di rendering: se None non costruisce la griglia di Pixel
         """
@@ -59,7 +61,8 @@ class Grid:
         self.resolution = resolution
         self.grid_width = window_width * resolution
         self.grid_height = window_height * resolution
-        self.spawn_offset = spawn_offset
+        self.uav_spawn_offset = uav_spawn_offset
+        self.gu_spawn_offset = gu_spawn_offset
         self.unexplored_point_max_steps = unexplored_point_max_steps
         self.render_mode = render_mode
 
@@ -83,10 +86,16 @@ class Grid:
                     row_pixels.append(pixel)
                 self.pixel_grid.append(row_pixels)
 
-        # Zona di spawn: angolo in basso a sinistra, con offset (in punti) 
-        self.spawn_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (
-            ((spawn_offset, self.grid_width  - spawn_offset),
-             (spawn_offset, self.grid_height - spawn_offset)),
+        # Zona di spawn UAV: angolo in basso a sinistra, con offset (in punti) 
+        self.uav_spawn_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (
+            ((uav_spawn_offset, self.grid_width  - uav_spawn_offset),
+             (uav_spawn_offset, self.grid_height - uav_spawn_offset)),
+        )
+        
+        # Zona di spawn GU: angolo in basso a sinistra, con offset (in punti)
+        self.gu_spawn_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (
+            ((gu_spawn_offset, self.grid_width  - gu_spawn_offset),
+             (gu_spawn_offset, self.grid_height - gu_spawn_offset)),
         )
         
         self.available_area: Tuple[Tuple[Tuple[float, float], Tuple[float, float]], ...] = (

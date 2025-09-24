@@ -43,6 +43,8 @@ class CommunicationChannel:
     # calculate PathLoss of the link between one UAV and one GU in dB
     def get_PathLoss(self, distance_uav_gu: float, current_state: int):
         FSPL = self.get_free_space_PathLoss(distance_uav_gu)
+        if current_state == -1:
+            return np.inf
         if current_state == 0:
             return FSPL + self.nLos
         return FSPL + self.nNLos

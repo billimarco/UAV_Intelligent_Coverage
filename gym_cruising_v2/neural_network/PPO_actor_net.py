@@ -36,7 +36,7 @@ class ActorHead(nn.Module):
         log_std_valid = self.fl3_logstd(x).clamp(-20, 20)
         std_valid = torch.exp(log_std_valid)
 
-
+        std_valid = torch.clamp(std_valid, min=1e-5)
 
         # Inizializza i tensori di output
         mean = torch.zeros(B * U, 2, device=token.device)

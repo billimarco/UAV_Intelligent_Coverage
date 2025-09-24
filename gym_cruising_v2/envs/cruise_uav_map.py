@@ -9,6 +9,7 @@ import pygame
 from gymnasium import spaces
 from gymnasium.spaces import Box
 from pygame import Surface
+from scipy.stats import truncnorm
 
 from gym_cruising_v2.actors.GU import GU
 from gym_cruising_v2.actors.UAV import UAV
@@ -20,52 +21,38 @@ from gym_cruising_v2.geometry.grid import Grid
 from gym_cruising_v2.utils.channels_utils import CommunicationChannel
 
 class CruiseUAVWithMap(Cruise):
-    uav = []
-    gu = []
-    pathLoss = []
-    SINR = []
-    connectivity_matrix = []
-    disappear_gu_prob: float
-
-    gu_covered = 0
-    max_theoretical_ground_uavs_points_coverage = 0
-    max_theoretical_new_explored_ground_uavs_points = 0
     
-    boundary_penalty_total = 0.0
-    collision_penalty_total = 0.0
-    spatial_coverage_total = 0.0
-    exploration_incentive_total = 0.0
-    homogenous_voronoi_partition_incentive_total = 0.0
-    gu_coverage_total = 0.0
-    
-    exploration_phase = True
-    steps_gu_coverage_phase = 0
-    
-    #total_uavs_point_coverage = 0
-    #simultaneous_uavs_points_coverage = 0
-    uav_total_covered_points = []
-    uav_shared_covered_points = []
-    
-    voronoi_partition = None
-    
-    last_unexplored_area_points: int
-    new_explored_area_points: int
-
     def __init__(self, args, render_mode=None) -> None:
         super().__init__(args, render_mode)
         
         self.max_uav_number = args.max_uav_number
         self.uav_number = args.uav_number
-        self.max_gu_number = args.max_gu_number
-        self.starting_gu_number = args.starting_gu_number
+        self.max_speed_uav = args.max_speed_uav # m/s
+        self.uav_altitude = args.uav_altitude # meters
         self.minimum_starting_distance_between_uav = args.minimum_starting_distance_between_uav # meters
         self.collision_distance = args.collision_distance # meters
+        
+        self.max_gu_number = args.max_gu_number
+        self.min_gu_number = args.min_gu_number
+        self.starting_gu_number = args.starting_gu_number
+        self.gu_max_speed = args.gu_max_speed # 5.56 m/s or 27.7 m/s
         self.spawn_gu_prob = args.spawn_gu_prob
-        self.gu_mean_speed = args.gu_mean_speed # 5.56 m/s or 27.7 m/s
-        self.gu_standard_deviation = args.gu_standard_deviation # Gaussian goes to 0 at approximately 3 times the standard deviation
-        self.max_speed_uav = args.max_speed_uav # m/s - about 20 Km/h x 10 steps
         self.covered_threshold = args.covered_threshold # dB
-        self.uav_altitude = args.uav_altitude # meters
+        
+        self.environment_type = args.environment_type
+        self.environment_random_spawn_despawn_gu = args.environment_random_spawn_despawn_gu
+        self.environment_gu_bounce = args.environment_gu_bounce
+        self.environment_type_random = args.environment_type_random
+        self.uav_number_random = args.uav_number_random
+        self.gu_number_random = args.gu_number_random
+        
+        self.clusters_movement = args.clusters_movement
+        self.clusters_number_random = args.clusters_number_random
+        self.clusters_variance_random = args.clusters_variance_random
+        self.clusters_gu_uniform_partition = args.clusters_gu_uniform_partition
+        self.clusters_number = args.clusters_number
+        self.clusters_variance_min = args.clusters_variance_min
+        self.clusters_variance_max = args.clusters_variance_max
         
         self.w_boundary_penalty = args.w_boundary_penalty
         self.w_collision_penalty = args.w_collision_penalty
@@ -86,10 +73,36 @@ class CruiseUAVWithMap(Cruise):
 
         self.communication_channel = CommunicationChannel(args)
         
+        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
+        self.gu_covered = 0
+        self.max_theoretical_ground_uavs_points_coverage = 0
+        self.max_theoretical_new_explored_ground_uavs_points = 0
+        
+        self.boundary_penalty_total = 0.0
+        self.collision_penalty_total = 0.0
+        self.spatial_coverage_total = 0.0
+        self.exploration_incentive_total = 0.0
+        self.homogenous_voronoi_partition_incentive_total = 0.0
+        self.gu_coverage_total = 0.0
+        
+        self.exploration_phase = True
+        self.steps_gu_coverage_phase = 0
+        
+        self.voronoi_partition = None
+        
+        self.last_unexplored_area_points = self.grid.grid_width*self.grid.grid_height
+        self.new_explored_area_points = 0
+        
         # Reset structures
-        self.available_gu_indexes = [False]*args.max_gu_number
-        self.covered_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
-        self.gu_mask = np.zeros(self.max_gu_number, dtype=bool)
+        self.uav = np.empty(self.max_uav_number, dtype=object)
+        self.gu = np.empty(self.max_gu_number, dtype=object)
+        self.path_loss = np.zeros((self.max_gu_number, self.max_uav_number), dtype=np.float32)
+        self.SINR = np.zeros((self.max_gu_number, self.max_uav_number), dtype=np.float32)
+        self.connectivity_matrix = np.zeros((self.max_gu_number, self.max_uav_number), dtype=np.int8)
+        self.groups = []
+        
+        self.last_seen_position_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
+        self.assumed_active_gu_mask = np.zeros(self.max_gu_number, dtype=bool)
         
         self.reset_observation_action_space()
 
@@ -151,16 +164,31 @@ class CruiseUAVWithMap(Cruise):
             
         self.seed = random.randint(0, 10000)
         np.random.seed(self.seed)
-            
-        self.uav = []
-        self.gu = []
-        self.pathLoss = []
-        self.SINR = []
-        self.connectivity_matrix = []
-        self.uav_number = self.options["uav"]
-        self.starting_gu_number = self.options["gu"]
-        #RAND
-        #self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
+        
+        if self.environment_type_random:
+            self.environment_type = self.np_random.choice(["uniform", "cluster", "road", "road_cluster", "random"])
+        if self.uav_number_random:
+            self.uav_number = self.np_random.integers(1, self.max_uav_number + 1)
+        if self.gu_number_random:
+            self.starting_gu_number = self.np_random.integers(self.min_gu_number, self.max_gu_number + 1)
+        
+        if self.options.get("test", False):
+            if "uav" in self.options:
+                self.uav_number = self.options["uav"]
+            if "gu" in self.options:
+                self.starting_gu_number = self.options["gu"]
+            if "environment_type" in self.options:
+                self.environment_type = self.options["environment_type"]
+            if self.environment_type == "cluster":
+                if self.clusters_number_random:
+                    self.clusters_number = self.np_random.integers(1, min(self.starting_gu_number, self.max_gu_number)//2 + 1)
+                if self.clusters_variance_random:
+                    self.clusters_variance = self.np_random.uniform(self.clusters_variance_min, self.clusters_variance_max)
+            else:
+                self.clusters_number = 0
+                self.clusters_variance = 0.0
+                
+        self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
         self.max_theoretical_ground_uavs_points_coverage = 0
         self.max_theoretical_new_explored_ground_uavs_points = 0
@@ -175,16 +203,17 @@ class CruiseUAVWithMap(Cruise):
         self.exploration_phase = True
         self.steps_gu_coverage_phase = 0
         
-        #self.total_uavs_point_coverage = 0
-        #self.simultaneous_uavs_points_coverage = 0
-        self.uav_total_covered_points = []
-        self.uav_shared_covered_points = []
+        self.voronoi_partition = None
         
-        voronoi_partition = None
+        self.uav = np.empty(self.max_uav_number, dtype=object)
+        self.gu = np.empty(self.max_gu_number, dtype=object)
+        self.path_loss = np.zeros((self.max_gu_number, self.max_uav_number), dtype=np.float32)
+        self.SINR = np.zeros((self.max_gu_number, self.max_uav_number), dtype=np.float32)
+        self.connectivity_matrix = np.zeros((self.max_gu_number, self.max_uav_number), dtype=bool)
+        self.groups = []
         
-        self.available_gu_indexes = [False]*self.max_gu_number
-        self.last_position_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
-        self.gu_mask = np.zeros(self.max_gu_number, dtype=bool)
+        self.last_seen_position_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
+        self.assumed_active_gu_mask = np.zeros(self.max_gu_number, dtype=bool)
         
         self.grid.reset()
         self.last_unexplored_area_points = self.grid.grid_width*self.grid.grid_height
@@ -197,14 +226,11 @@ class CruiseUAVWithMap(Cruise):
     # INITIALIZE ENVIROMENT
     def init_environment(self, options: Optional[dict] = None) -> None:
         self.init_uav()
-        if not options["clustered"]:
-            self.init_gu()
-        else:
-            self.init_gu_clustered(options)
+        self.init_gu()
 
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
-        self.calculate_UAVs_connection_area_vectorized() # Calcolo della copertura della mappa di esplorazione
+        self.calculate_UAVs_connection_area() # Calcolo della copertura della mappa di esplorazione
         self.check_connection_and_coverage_UAV_GU()
         
         if self.w_exploration > 0.0 or self.w_spatial_coverage > 0.0:
@@ -215,39 +241,111 @@ class CruiseUAVWithMap(Cruise):
             self.calculate_voronoi_partition()
  
     def init_uav(self) -> None:
-        area = self.np_random.choice(self.grid.spawn_area)
-        # x_coordinate = int(self.np_random.uniform(area[0][0] + 800, area[0][1] - 800))
-        for i in range(self.uav_number):
-            while True:
+        area = self.np_random.choice(self.grid.uav_spawn_area)
+        for i in range(self.max_uav_number):
+            if i >= self.uav_number:
+                self.uav[i] = UAV(i, Coordinate(0, 0, 0), False) # UAV non attivo
+            else:
+                while True:
+                    x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
+                    y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
+                    position = Coordinate(x_coordinate, y_coordinate, self.uav_altitude)
+
+                    # Primo UAV: non serve il check
+                    if i == 0 or not self.check_if_are_too_close(i, position):
+                        self.uav[i] = UAV(i, position, True)
+                        break
+    
+    def init_gu(self) -> None:
+        if self.environment_type == "uniform":
+            self.init_gu_uniform()
+        elif self.environment_type == "cluster":
+            self.init_gu_cluster()
+        else:
+            self.init_gu_uniform()
+            
+    def init_gu_uniform(self) -> None:
+        area = self.np_random.choice(self.grid.gu_spawn_area)
+        
+        group = {
+                "type": "uniform",
+                "ids": [],
+                "options": {}
+            }
+        self.groups.append(group)
+        
+        for i in range(self.max_gu_number):
+            
+            if i >= self.starting_gu_number:
+                gu = GU(i, Coordinate(0, 0, 0), False) # GU non attivo
+            else:
                 x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
                 y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
-                position = Coordinate(x_coordinate, y_coordinate, self.uav_altitude)
-
-                # Primo UAV: non serve il check
-                if i == 0 or not self.check_if_are_too_close(i, position):
-                    self.uav.append(UAV(i, position))
-                    break
-
-    def init_gu(self) -> None:
-        area = self.np_random.choice(self.grid.spawn_area)
-        for i in range(self.starting_gu_number):
-            x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
-            y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
-            position = Coordinate(x_coordinate, y_coordinate, 0)
-            gu = GU(i,position)
-            self.available_gu_indexes[i] = True
+                position = Coordinate(x_coordinate, y_coordinate, 0)
+                gu = GU(i, position, True) # GU attivo
+                group["ids"].append(i)
+                
             self.init_channel(gu)
-            self.gu.append(gu)
+            self.gu[i] = gu
 
-    def init_gu_clustered(self, options: Optional[dict] = None) -> None:
-        area = self.np_random.choice(self.grid.spawn_area)
-        std_dev = np.sqrt(options['variance'])
-        number_of_clusters = options['clusters_number']
-        gu_for_cluster = int(self.starting_gu_number / number_of_clusters)
+    def init_gu_cluster(self) -> None:
+        area = self.np_random.choice(self.grid.gu_spawn_area)
+        
+        if self.clusters_number_random:
+            number_of_clusters = self.np_random.integers(1, self.clusters_number + 1)
+        else:
+            number_of_clusters = self.clusters_number
+        
+        if self.clusters_gu_uniform_partition:
+            # Divisione uniforme con eventuale resto distribuito
+            gu_for_cluster = self.starting_gu_number // number_of_clusters
+            remainder = self.starting_gu_number % number_of_clusters
+
+            # Ogni cluster ha almeno gu_for_cluster
+            parts = [gu_for_cluster] * number_of_clusters
+
+            # Distribuisci il resto aggiungendo 1 ai primi 'remainder' cluster
+            for i in range(remainder):
+                parts[i] += 1
+        else:
+            # Genera n-1 punti di taglio casuali tra 1 e numero-1
+            cut_points = sorted(random.sample(range(1, self.starting_gu_number), number_of_clusters - 1))
+
+            # Aggiungi gli estremi (0 e numero) per ottenere gli intervalli
+            cut_points = [0] + cut_points + [self.starting_gu_number]
+
+            # Calcola le differenze per ottenere le singole parti
+            parts = [cut_points[i+1] - cut_points[i] for i in range(number_of_clusters)]
+        
+        gu_id = 0  # Contatore globale per l'ID dei GU
         for i in range(number_of_clusters):
             mean_x = self.np_random.uniform(area[0][0], area[0][1])
-            mean_y = self.np_random.uniform(area[0][0], area[0][1])
-            for j in range(gu_for_cluster):
+            mean_y = self.np_random.uniform(area[1][0], area[1][1])
+            
+            if self.clusters_variance_random:
+                variance = self.np_random.uniform(self.clusters_variance_min, self.clusters_variance_max)
+            else:
+                variance = self.clusters_variance_min
+            std_dev = np.sqrt(variance)
+            
+            if self.clusters_movement == "random":
+                movement_type = self.np_random.choice(["fleet", "stationary", "independent"])
+            else:
+                movement_type = self.clusters_movement
+                
+            group = {
+                "type": "cluster",
+                "ids": [],
+                "options": {
+                    "mean_x": mean_x,
+                    "mean_y": mean_y,
+                    "std_dev": std_dev,
+                    "movement_type": movement_type
+                }
+            }
+            self.groups.append(group)
+            
+            for _ in range(parts[i]):
                 repeat = True
                 while repeat:
                     # Generazione del numero casuale
@@ -256,13 +354,24 @@ class CruiseUAVWithMap(Cruise):
                     if area[0][0] <= x_coordinate <= area[0][1] and area[1][0] <= y_coordinate <= area[1][1]:
                         position = Coordinate(x_coordinate, y_coordinate, 0)
                         repeat = False
-                gu = GU(i*gu_for_cluster+j,position)
-                self.available_gu_indexes[i*gu_for_cluster+j] = True
+                        
+                gu = GU(gu_id, position, True)
                 self.init_channel(gu)
-                self.gu.append(gu)
+                self.gu[gu_id] = gu
+                group["ids"].append(gu_id)
+                gu_id += 1  # Incrementa l'ID globale
+                
+        # Inizializza i GU non attivi
+        for i in range(gu_id, self.max_gu_number):
+            gu = GU(i, Coordinate(0, 0, 0), False)
+            self.init_channel(gu)
+            self.gu[i] = gu # GU non attivo
 
     def init_channel(self, gu):
         for uav in self.uav:
+            if not uav.active:
+                gu.channels_state.append(-1) # Canale non attivo
+                continue
             distance = gu.position.calculate_distance_to_coordinate(uav.position)
             initial_channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
             sample = random.random()
@@ -306,13 +415,15 @@ class CruiseUAVWithMap(Cruise):
 
         # Popola uav_states con posizione e azione normalizzate per ogni UAV attivo
         for i in range(len(self.uav)):
+            if not self.uav[i].active:
+                continue
             pos = self.normalizePositions(self.uav[i].position)  # posizione normalizzata [x, y]
             act = self.normalizeActions(np.array([self.uav[i].last_shift_x, self.uav[i].last_shift_y]))  # azione normalizzata [dx, dy]
             uav_states[i] = np.concatenate([pos, act])  # concatena posizione e azione in vettore di dimensione 4
             uav_mask[i] = True  # marca UAV come attivo
             
             for j in range(len(self.uav)):
-                if i == j:
+                if i == j or not self.uav[j].active:
                     continue
                 uav_distance = self.uav[i].position.calculate_distance_to_coordinate(self.uav[j].position)
                 h_i = self.uav[i].position.z_coordinate
@@ -343,26 +454,25 @@ class CruiseUAVWithMap(Cruise):
 
 
         # Inizializza lo stato delle ultime posizioni normalizzate degli utenti
-        last_normalized_positions_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
- 
-        # Togli le posizioni dal vettore di stato delle ultime posizioni che sono attualmente coperte e la maschera
-        for gu_id, last_gu_position in enumerate(self.last_position_users_states):
+        last_seen_normalized_positions_users_states = np.zeros((self.max_gu_number, 2), dtype=np.float64)
+        
+        # Togli le posizioni dal vettore di stato delle ultime posizioni che sono attualmente coperte e quelle dei GU non più assegnati ad un ID
+        for gu_id, last_gu_position in enumerate(self.last_seen_position_users_states):
             last_gu_position_coordinate = Coordinate(last_gu_position[0], last_gu_position[1], 0) # posizione normalizzata [x, y]
             if self.grid.get_point_from_coordinate(last_gu_position_coordinate).is_covered():
-                self.last_position_users_states[gu_id] = np.array([0, 0], dtype=np.float64)  # resetta la posizione dell'utente
-                self.gu_mask[gu_id] = False  # inattivo l'utente
+                self.last_seen_position_users_states[gu_id] = np.array([0, 0], dtype=np.float64)  # resetta la posizione dell'utente
+                self.assumed_active_gu_mask[gu_id] = False  # inattivo l'utente
               
         # Aggiorna le posizioni del vettore di stato delle ultime posizioni degli utenti coperti e la maschera
-        for gu in self.gu:
-            if gu.covered:
-                self.last_position_users_states[gu.id] = gu.position.to_array_2d()  # aggiorna la posizione dell'utente
-                self.gu_mask[gu.id] = True  # marca l’utente come coperto/attivo
+            if self.gu[gu_id].covered:
+                self.last_seen_position_users_states[gu_id] = self.gu[gu_id].position.to_array_2d()  # aggiorna la posizione dell'utente
+                self.assumed_active_gu_mask[gu_id] = True  # marca l’utente come coperto/attivo
         
         # Raccogli le posizioni normalizzate degli utenti coperti
-        for gu_id, last_gu_position in enumerate(self.last_position_users_states):
-            if self.gu_mask[gu_id]:
+            if self.assumed_active_gu_mask[gu_id]:
                 last_gu_position_coordinate = Coordinate(last_gu_position[0], last_gu_position[1], 0)
-                last_normalized_positions_users_states[gu_id] = self.normalizePositions(last_gu_position_coordinate)  # posizione normalizzata [x, y]
+                last_seen_normalized_positions_users_states[gu_id] = self.normalizePositions(last_gu_position_coordinate)  # posizione normalizzata [x, y]
+                
 
         # Crea il dizionario di osservazione da restituire
         observation = {
@@ -370,8 +480,8 @@ class CruiseUAVWithMap(Cruise):
             "uav_states": uav_states,
             "uav_mask": uav_mask,
             "uav_flags": uav_flags,
-            "covered_users_states": last_normalized_positions_users_states,
-            "gu_mask": self.gu_mask
+            "covered_users_states": last_seen_normalized_positions_users_states,
+            "gu_mask": self.assumed_active_gu_mask
         }
 
         return observation
@@ -385,7 +495,7 @@ class CruiseUAVWithMap(Cruise):
         
         self.calculate_PathLoss_with_Markov_Chain()
         self.calculate_SINR()
-        self.calculate_UAVs_connection_area_vectorized() # Calcolo della copertura della mappa di esplorazione
+        self.calculate_UAVs_connection_area() # Calcolo della copertura della mappa di esplorazione
         self.check_connection_and_coverage_UAV_GU()
         
         if self.w_exploration > 0.0 or self.w_spatial_coverage > 0.0:
@@ -394,13 +504,6 @@ class CruiseUAVWithMap(Cruise):
             self.calculate_new_explored_area_points()
         if self.w_homogenous_voronoi_partition > 0.0:
             self.calculate_voronoi_partition()
-
-    def update_GU(self):
-        #RAND
-        #self.check_if_spawn_new_GU()
-        self.move_GU()
-        #RAND
-        #self.check_if_disappear_GU()
 
     def move_UAV(self, actions):
         active_actions = actions["uav_moves"][actions["uav_mask"]]
@@ -415,49 +518,154 @@ class CruiseUAVWithMap(Cruise):
         real_actions = self.max_speed_uav * clipped_actions
         
         for i, uav in enumerate(self.uav):
+            if not uav.active:
+                continue
             uav.position = Coordinate(uav.position.x_coordinate + real_actions[i][0], uav.position.y_coordinate + real_actions[i][1], self.uav_altitude)
             uav.last_shift_x = real_actions[i][0]
             uav.last_shift_y = real_actions[i][1]
+            
+    def update_GU(self):
+        if self.environment_random_spawn_despawn_gu:
+            self.check_if_spawn_new_GU() # Spawna nuovi GU con una certa probabilità
+            
+        self.move_GU()
+        
+        if self.environment_random_spawn_despawn_gu:
+            self.check_if_disappear_GU() # Rimuove alcuni GU con una certa probabilità
 
     def move_GU(self):
         area = self.np_random.choice(self.grid.available_area)
-        for gu in self.gu:
-            repeat = True
-            while repeat:
-                distance = self.np_random.normal(self.gu_mean_speed, self.gu_standard_deviation)
-                if distance < 0.0:
-                    distance = 0.0
-                direction = np.random.choice(['up', 'down', 'left', 'right'])
+        for group in self.groups:
+            if group["type"] == "uniform":
+                self.move_GU_uniform(group, area)
+            elif group["type"] == "cluster":
+                self.move_GU_cluster(group, area)
+            else:
+                self.move_GU_uniform(group, area)
+    
+    def move_GU_uniform(self, group, area):
+        # Itera su una COPIA della lista per evitare problemi durante la rimozione
+        for gu_id in group["ids"][:]:
+            gu = self.gu[gu_id]
+            repeat_until_in_area = True
+            while repeat_until_in_area:
+                # Sample distance from truncnorm [0, max_distance]
+                distance = truncnorm.rvs(0, 1, loc=0, scale=self.gu_max_speed)
+                
+                # Uniform random direction
+                theta = np.random.uniform(0, 2*np.pi)
 
-                if direction == 'up':
-                    new_position = Coordinate(gu.position.x_coordinate, gu.position.y_coordinate + distance,0)
-                elif direction == 'down':
-                    new_position = Coordinate(gu.position.x_coordinate, gu.position.y_coordinate - distance,0)
-                elif direction == 'left':
-                    new_position = Coordinate(gu.position.x_coordinate - distance, gu.position.y_coordinate,0)
-                elif direction == 'right':
-                    new_position = Coordinate(gu.position.x_coordinate + distance, gu.position.y_coordinate,0)
-
-                # check if GU exit from environment
-                if new_position.is_in_area(area):
-                    repeat = False
-                    gu.position = new_position
+                # Delta coordinate
+                delta_x = distance * np.cos(theta)
+                delta_y = distance * np.sin(theta)
+                
+                # New position
+                new_position = Coordinate(
+                    gu.position.x_coordinate + delta_x,
+                    gu.position.y_coordinate + delta_y,
+                    0
+                )
+                
+                if self.environment_gu_bounce:
+                    # check if GU exit from environment
+                    if new_position.is_in_area(area):
+                        repeat_until_in_area = False
+                        gu.position = new_position
+                        gu.last_shift_x = delta_x
+                        gu.last_shift_y = delta_y
+                    else:
+                        repeat_until_in_area = True
                 else:
-                    repeat = True
+                    repeat_until_in_area = False
+                    if new_position.is_in_area(area):
+                        gu.position = new_position
+                        gu.last_shift_x = delta_x
+                        gu.last_shift_y = delta_y
+                    else:
+                        gu.reset(Coordinate(0, 0, 0), False)
+                        group["ids"].remove(gu_id)
+    
+    def move_GU_cluster(self, group, area):
+        dispersion = 3 * group["options"]["std_dev"]
+        if group["options"]["movement_type"] == "fleet":
+            repeat_until_in_area = True
+            while repeat_until_in_area:
+                # --- Calcolo spostamento casuale ---
+                distance = truncnorm.rvs(0, 1, loc=0, scale=self.gu_max_speed)
+                theta = np.random.uniform(0, 2 * np.pi)
+
+                delta_x = distance * np.cos(theta)
+                delta_y = distance * np.sin(theta)
+
+                # Nuova posizione ipotetica del centro del cluster
+                new_mean_x = group["options"]["mean_x"] + delta_x
+                new_mean_y = group["options"]["mean_y"] + delta_y
+
+                # --- Validazione movimento ---
+                if self.environment_gu_bounce:
+                    valid_move = (
+                        area[0][0] + dispersion <= new_mean_x <= area[0][1] - dispersion and
+                        area[1][0] + dispersion <= new_mean_y <= area[1][1] - dispersion
+                    )
+                else:
+                    valid_move = True  # Non c'è bounce, qualsiasi movimento è valido
+
+                # Se non valido, ripeti
+                if not valid_move:
+                    repeat_until_in_area = True
+                    continue
+
+                # --- Movimento valido, applica spostamento ---
+                repeat_until_in_area = False
+
+                # Aggiorna centro cluster
+                group["options"]["mean_x"] = new_mean_x
+                group["options"]["mean_y"] = new_mean_y
+
+                # Aggiorna ogni GU nel cluster
+                for gu_id in group["ids"][:]:  # copia per rimuovere in sicurezza
+                    gu = self.gu[gu_id]
+
+                    # Nuova posizione GU
+                    new_position = Coordinate(
+                        gu.position.x_coordinate + delta_x,
+                        gu.position.y_coordinate + delta_y,
+                        0
+                    )
+
+                    # Se il GU resta nell'area
+                    if new_position.is_in_area(area):
+                        gu.position = new_position
+                        gu.last_shift_x = delta_x
+                        gu.last_shift_y = delta_y
+                    else:
+                        # Se esce dall'area: reset e rimozione dal cluster
+                        gu.reset(Coordinate(0, 0, 0), False)
+                        group["ids"].remove(gu_id)
+        elif group["options"]["movement_type"] == "stationary":
+            return
+        elif group["options"]["movement_type"] == "independent":
+            self.move_GU_uniform(group, area)
+        else:
+            self.move_GU_uniform(group, area)
+        
 
 
     # DO CALCULATIONS AND REWARDS 
         
     def calculate_PathLoss_with_Markov_Chain(self):
-        self.pathLoss = []
-        for gu in self.gu:
-            current_GU_PathLoss = []
+        for index_gu, gu in enumerate(self.gu):
             #RAND
             '''
             new_channels_state = []
             gu_shift = gu.position.calculate_distance(gu.previous_position)
             '''
-            for index, uav in enumerate(self.uav):
+            for index_uav, uav in enumerate(self.uav):
+                
+                if not gu.active or not uav.active:
+                    self.path_loss[index_gu][index_uav] = np.inf
+                    continue
+                
                 distance = gu.position.calculate_distance_to_coordinate(uav.position)
                 #RAND
                 '''
@@ -469,34 +677,35 @@ class CruiseUAVWithMap(Cruise):
                 new_channels_state.append(current_state)
                 path_loss = self.communication_channel.get_PathLoss(distance, current_state)
                 '''
-                path_loss = self.communication_channel.get_PathLoss(distance, gu.channels_state[index])
-                current_GU_PathLoss.append(path_loss)
-            self.pathLoss.append(current_GU_PathLoss)
+                path_loss = self.communication_channel.get_PathLoss(distance, gu.channels_state[index_uav])
+                self.path_loss[index_gu][index_uav] = path_loss
             #RAND
             '''
-            gu.setChannelsState(new_channels_state)
+            gu.set_channels_state(new_channels_state)
             '''
              
     def calculate_SINR(self):
-        self.SINR = []
-        for i in range(len(self.gu)):
-            current_GU_SINR = []
-            current_pathLoss = self.pathLoss[i]
-            for j in range(len(self.uav)):
-                copy_list = current_pathLoss.copy()
-                del copy_list[j]
-                current_GU_SINR.append(self.communication_channel.getSINR(current_pathLoss[j], copy_list))
-            self.SINR.append(current_GU_SINR)
+        for index_gu, gu in enumerate(self.gu):
+            current_pathLoss = self.path_loss[index_gu]
+            for index_uav, uav in enumerate(self.uav):
+                
+                if not gu.active or not uav.active:
+                    self.SINR[index_gu][index_uav] = -np.inf
+                    continue
+                
+                copy_list = np.delete(current_pathLoss, index_uav)
+                self.SINR[index_gu][index_uav] = self.communication_channel.getSINR(current_pathLoss[index_uav], copy_list) # Default se non c'è connessione
                
     
-    def calculate_UAVs_connection_area_vectorized(self):
+    def calculate_UAVs_connection_area(self):
         # Calcola la distanza di copertura in Line-of-Sight (LoS) basata sul SINR e sulla soglia di copertura
         distance_LoS_coverage = self.communication_channel.get_distance_from_SINR_closed_form(
             self.covered_threshold, 0
         )
 
-        # Estrae le posizioni 3D di tutti gli UAV in un array NumPy (UAV, 3)
-        uav_positions = np.array([uav.position.to_array_3d() for uav in self.uav])
+        # Estrae le posizioni 3D di tutti gli UAV attivi
+        active_uavs = [uav for uav in self.uav if uav.active]
+        uav_positions = np.array([uav.position.to_array_3d() for uav in active_uavs])
 
         # Flatten dei punti della griglia
         point_grid_flat = [point for row in self.grid.point_grid for point in row]
@@ -513,9 +722,9 @@ class CruiseUAVWithMap(Cruise):
         coverage_counts = np.sum(coverage_mask, axis=1)
 
         # Statistiche per UAV
-        self.uav_total_covered_points = np.sum(coverage_mask, axis=0).tolist()
-        self.uav_shared_covered_points = np.sum(coverage_mask & (coverage_counts[:, None] > 1), axis=0).tolist()
-
+        for uav_index, uav in enumerate(active_uavs):
+            uav.total_covered_points = int(np.sum(coverage_mask[:, uav_index]))
+            uav.shared_covered_points = int(np.sum(coverage_mask[:, uav_index] & (coverage_counts > 1)))
         
         '''
         # Inizializza le statistiche di copertura
@@ -550,6 +759,10 @@ class CruiseUAVWithMap(Cruise):
         max_new_explored_ground_points = 0
 
         for uav in self.uav:
+            
+            if not uav.active:
+                continue
+            
             h = uav.position.z_coordinate
             R = self.communication_channel.get_distance_from_SINR_closed_form(self.covered_threshold, 0)
 
@@ -592,7 +805,7 @@ class CruiseUAVWithMap(Cruise):
         """
 
         # Ottieni le posizioni 2D degli UAV come array NumPy
-        points = np.array([uav.position.to_array_2d() for uav in self.uav])  # Shape: (N, 2)
+        points = np.array([uav.position.to_array_2d() for uav in self.uav if uav.active])  # Shape: (N, 2)
 
         # Crea una griglia di coordinate (meshgrid)
         grid_x, grid_y = np.meshgrid(np.arange(self.grid.grid_width), np.arange(self.grid.grid_height))
@@ -685,13 +898,14 @@ class CruiseUAVWithMap(Cruise):
     
     def calculate_reward(self, terminated):
 
-        num_uav = len(self.uav)
         individual_rewards = [0.0 for _ in range(self.max_uav_number)]
 
         # 1. Penalità per avvicinamento ai bordi e agli altri uav
         self.boundary_penalty_total = 0.0
         self.collision_penalty_total = 0.0
-        for i in range(num_uav):
+        for i in range(len(self.uav)):
+            if not self.uav[i].active:
+                continue
             if self.w_boundary_penalty > 0.0:
                 boundary_penalty = self.calculate_boundary_repulsive_potential(self.uav[i])
                 self.boundary_penalty_total -= self.w_boundary_penalty * boundary_penalty
@@ -700,7 +914,7 @@ class CruiseUAVWithMap(Cruise):
 
             # Collisioni
             if self.w_collision_penalty > 0.0:
-                for j in range(i + 1, num_uav):
+                for j in range(i + 1, len(self.uav)):
                     collision_penalty = self.calculate_uav_repulsive_potential(self.uav[i], self.uav[j])
                     #afar_collision_incentive = 1.0 - collision_penalty
                     self.collision_penalty_total -= 2 * self.w_collision_penalty * collision_penalty
@@ -712,8 +926,15 @@ class CruiseUAVWithMap(Cruise):
         # 2. Copertura spaziale (evita UAV sovrapposti) - volendo potrebbe essere reward individuale se altezze uav fossero diverse
         self.spatial_coverage_total = 0.0
         if self.max_theoretical_ground_uavs_points_coverage > 0 and self.w_spatial_coverage > 0.0:
-            for i in range(num_uav): 
-                uav_coverage = (self.uav_total_covered_points[i] - self.uav_shared_covered_points[i]) / int(self.max_theoretical_ground_uavs_points_coverage / num_uav)
+            for i in range(len(self.uav)):
+                if not self.uav[i].active:
+                    continue 
+                uav_coverage = np.clip(
+                    (self.uav[i].total_covered_points - self.uav[i].shared_covered_points) /
+                    int(self.max_theoretical_ground_uavs_points_coverage / self.uav_number),
+                    0.0,  # limite minimo
+                    1.0   # limite massimo
+                )
                 '''
                 #reward individuale per copertura spaziale tipo 1
                 if uav_coverage > self.spatial_coverage_threshold:
@@ -734,15 +955,17 @@ class CruiseUAVWithMap(Cruise):
                     self.spatial_coverage_total += 0
                 else:
                     self.spatial_coverage_total -= (1 - uav_coverage)
-            for i in range(num_uav):
-                individual_rewards[i] += self.w_spatial_coverage * self.spatial_coverage_total / num_uav
+            for i in range(len(self.uav)):
+                if not self.uav[i].active:
+                    continue
+                individual_rewards[i] += self.w_spatial_coverage * self.spatial_coverage_total / self.uav_number
             self.spatial_coverage_total *= self.w_spatial_coverage  # Normalizza il reward globale per copertura spaziale    
                
             '''   
                 # reward globale per copertura spaziale tipo 2
                 self.spatial_coverage_total -= (1 - uav_coverage)
-            for i in range(num_uav):
-                individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / num_uav
+            for i in range(len(self.uav)):
+                individual_rewards[i] += self.w_exploration * self.spatial_coverage_total / self.uav_number
             '''
         
         # 3. Incentivo all'esplorazione (bassa densità di esplorazione)
@@ -767,13 +990,17 @@ class CruiseUAVWithMap(Cruise):
                     self.exploration_phase = False
                     self.steps_gu_coverage_phase = self.max_steps_gu_coverage_phase
                 else:
-                    self.exploration_incentive_total = self.w_exploration * exploration_incentive * num_uav
-                    for i in range(num_uav):
+                    self.exploration_incentive_total = self.w_exploration * exploration_incentive * self.uav_number
+                    for i in range(len(self.uav)):
+                        if not self.uav[i].active:
+                            continue
                         individual_rewards[i] += self.w_exploration * exploration_incentive
             elif self.reward_mode == "mixed":
-                exploration_incentive = (balanced_exploration_incentive)
-                self.exploration_incentive_total = self.w_exploration * exploration_incentive * num_uav
-                for i in range(num_uav):
+                exploration_incentive = (explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive) / 2 
+                self.exploration_incentive_total = self.w_exploration * exploration_incentive * self.uav_number
+                for i in range(len(self.uav)):
+                    if not self.uav[i].active:
+                        continue
                     individual_rewards[i] += self.w_exploration * exploration_incentive
             
                 
@@ -783,14 +1010,14 @@ class CruiseUAVWithMap(Cruise):
         self.homogenous_voronoi_partition_incentive_total = 0.0
         # Calcola il numero ideale di punti per UAV in una partizione equa
         if self.w_homogenous_voronoi_partition > 0.0 and self.exploration_phase:
-            counts = np.bincount(self.voronoi_partition.flatten(), minlength=num_uav)
-            ideal_area_points = total_area_points / num_uav
+            counts = np.bincount(self.voronoi_partition.flatten(), minlength=self.uav_number)
+            ideal_area_points = total_area_points / self.uav_number
             
             # Deviazione assoluta media
             mad = np.mean(np.abs(counts - ideal_area_points))
 
-            # Normalizzazione: massimo possibile MAD = total_area_points * (1 - 1/num_uav)
-            max_mad = ideal_area_points * (1 - 1 / num_uav)
+            # Normalizzazione: massimo possibile MAD = total_area_points * (1 - 1/self.uav_number)
+            max_mad = ideal_area_points * (1 - 1 / self.uav_number)
 
             # Normalizzazione: 0 = perfetta, -1 = perfetta
             homogenous_voronoi_partition_incentive = -(mad / max_mad)
@@ -798,7 +1025,9 @@ class CruiseUAVWithMap(Cruise):
 
             self.homogenous_voronoi_partition_incentive_total = self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive * num_uav
             
-            for i in range(num_uav):
+            for i in range(len(self.uav)):
+                if not self.uav[i].active:
+                    continue
                 individual_rewards[i] += self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive
         
         # 5. Copertura dei GU massima
@@ -807,7 +1036,7 @@ class CruiseUAVWithMap(Cruise):
         '''
         contributions = [
             max(0.0, self.gu_covered - self.calculate_RCR_without_uav_i(i))
-            for i in range(len(self.uav))
+            for i in range(len(self.uav)) if self.uav[i].active
         ]
         sum_contributions = sum(contributions)
         if sum_contributions > 0:
@@ -817,7 +1046,7 @@ class CruiseUAVWithMap(Cruise):
         '''    
         if self.reward_mode == "twophases":    
             if self.steps_gu_coverage_phase > 0 and not self.exploration_phase:
-                coverage_score = self.w_exploration + (self.gu_covered / np.sum(self.gu_mask)) if np.sum(self.gu_mask) > 0 else 0.0
+                coverage_score = self.w_exploration + (self.gu_covered / np.sum(self.assumed_active_gu_mask)) if np.sum(self.assumed_active_gu_mask) > 0 else 0.0
                 self.steps_gu_coverage_phase -= 1
                 if self.steps_gu_coverage_phase == 0:
                     self.exploration_phase = True
@@ -832,25 +1061,31 @@ class CruiseUAVWithMap(Cruise):
                 tradeoff_factor = math.pow(exploration_incentive, self.k_factor) # x^k
             else:
                 tradeoff_factor = exploration_incentive
-            coverage_score = tradeoff_factor * (self.gu_covered / np.sum(self.gu_mask)) if np.sum(self.gu_mask) > 0 else 0.0
+            coverage_score = tradeoff_factor * (self.gu_covered / np.sum(self.assumed_active_gu_mask)) if np.sum(self.assumed_active_gu_mask) > 0 else 0.0
             
         gu_coverage = self.w_gu_coverage * coverage_score
         
         # Reward globale per copertura GU
-        for i in range(num_uav):
+        for i in range(len(self.uav)):
+            if not self.uav[i].active:
+                continue
             individual_rewards[i] += gu_coverage
             self.gu_coverage_total += gu_coverage
         
         '''
         # Reward individuale per copertura GU
-        for i in range(num_uav):
-            individual_rewards[i] += (proportions[i] * gu_coverage) * num_uav
-            self.gu_coverage_total += (proportions[i] * gu_coverage) * num_uav
+        for i in range(len(self.uav)):
+            if not self.uav[i].active:
+                continue
+            individual_rewards[i] += (proportions[i] * gu_coverage) * self.uav_number
+            self.gu_coverage_total += (proportions[i] * gu_coverage) * self.uav_number
         '''    
         
         #5. Penalità per UAV terminati
         '''
-        for i in range(num_uav):
+        for i in range(len(self.uav)):
+            if not self.uav[i].active:
+                continue
             if terminated[i]:
                 individual_rewards[i] = -1.0
         '''
@@ -869,50 +1104,75 @@ class CruiseUAVWithMap(Cruise):
     
     
     # CHECKS
-    '''
-    #TODO ripensarla con i GU index
     def check_if_disappear_GU(self):
-        index_to_remove = []
-        for i in range(len(self.gu)):
+        for i, gu in enumerate(self.gu):
             sample = random.random()
-            if sample <= self.disappear_gu_prob:
-                index_to_remove.append(i)
-        index_to_remove = sorted(index_to_remove, reverse=True)
+            if sample <= self.disappear_gu_prob and gu.active:
+                gu.reset(Coordinate(0, 0, 0), False) # Reset position and state
+                
+                for group in self.groups[:]:  # itera su una copia della lista
+                    if i in group["ids"]:
+                        group["ids"].remove(i)
+                        '''
+                        if group["type"] == "cluster" and len(group["ids"]) == 0:
+                            self.groups.remove(group)  # Rimuove realmente il gruppo dalla lista
+                        '''
+                        break
+                        
+                inactive_indices = [j for j, gu in enumerate(self.gu) if not gu.active]
+                if inactive_indices:
+                    self.disappear_gu_prob = (self.spawn_gu_prob * 4) / len(inactive_indices)
+                else:
+                    self.disappear_gu_prob = 0.0
+                    
 
-        if index_to_remove != []:
-            print("GU disappeared: ", index_to_remove)
-            print("self.gu number: ", len(self.gu))
-
-        for index in index_to_remove:
-            del self.gu[index]
-
-    #TODO ripensarla con i GU index
     def check_if_spawn_new_GU(self):
-        sample = random.random()
         for _ in range(4):
+            sample = random.random()
             if sample <= self.spawn_gu_prob:
-                area = self.np_random.choice(self.grid.spawn_area)
-                x_coordinate = int(self.np_random.uniform(area[0][0], area[0][1]))
-                y_coordinate = int(self.np_random.uniform(area[1][0], area[1][1]))
-                position = self.grid.get_point(x_coordinate, y_coordinate)
-                gu = GU(position)
-                self.init_channel(gu)
-                self.gu.append(gu)
-        # update disappear gu probability
-        self.disappear_gu_prob = self.spawn_gu_prob * 4 / len(self.gu)
-    '''
+                area = self.np_random.choice(self.grid.gu_spawn_area)
+                
+                group_index = random.randrange(len(self.groups))
+                if self.groups[group_index]["type"] == "uniform":
+                    x_coordinate = self.np_random.uniform(area[0][0], area[0][1])
+                    y_coordinate = self.np_random.uniform(area[1][0], area[1][1])
+                    position = Coordinate(x_coordinate, y_coordinate, 0)
+                elif self.groups[group_index]["type"] == "cluster":
+                    repeat = True
+                    while repeat:
+                        x_coordinate = np.random.normal(self.groups[group_index]["options"]["mean_x"], self.groups[group_index]["options"]["std_dev"])
+                        y_coordinate = np.random.normal(self.groups[group_index]["options"]["mean_y"], self.groups[group_index]["options"]["std_dev"])
+                        if area[0][0] <= x_coordinate <= area[0][1] and area[1][0] <= y_coordinate <= area[1][1]:
+                            position = Coordinate(x_coordinate, y_coordinate, 0)
+                            repeat = False
+                            
+                # Trova il primo GU con active == False
+                inactive_indices = [i for i, gu in enumerate(self.gu) if not gu.active]
+                if inactive_indices:
+                    id = inactive_indices[0]  # Prende il primo
+                else:
+                    id = -1  # Nessun GU inattivo trovato
+                    
+                if id != -1:
+                    new_gu = GU(id, position, True)
+                    self.init_channel(new_gu)
+                    self.gu[id] = new_gu
+                    self.groups[group_index]["ids"].append(id)
+                    self.disappear_gu_prob = (self.spawn_gu_prob * 4) / len(inactive_indices)
+                else:
+                    self.disappear_gu_prob = 0.0
     
     def check_connection_and_coverage_UAV_GU(self):
         covered = 0
-        self.connectivity_matrix = np.zeros((len(self.gu), len(self.uav)), dtype=int)
-        for i, gu in enumerate(self.gu):
-            gu.setCovered(False)
-            current_SINR = self.SINR[i]
-            for j in range(len(self.uav)):
-                if current_SINR[j] >= self.covered_threshold:
-                    self.connectivity_matrix[i, j] = 1
-            if any(SINR >= self.covered_threshold for SINR in current_SINR):
-                gu.setCovered(True)
+        for index_gu, gu in enumerate(self.gu):
+            gu.set_covered(False)
+            for index_uav, uav in enumerate(self.uav):
+                if self.SINR[index_gu][index_uav] >= self.covered_threshold and uav.active and gu.active:
+                    self.connectivity_matrix[index_gu][index_uav] = True
+                else:
+                    self.connectivity_matrix[index_gu][index_uav] = False
+            if any(SINR >= self.covered_threshold for SINR in self.SINR[index_gu] if gu.active):
+                gu.set_covered(True)
                 covered += 1
         self.gu_covered = covered
 
@@ -923,6 +1183,9 @@ class CruiseUAVWithMap(Cruise):
         terminated_matrix = []
         area = self.np_random.choice(self.grid.available_area)
         for i, uav in enumerate(self.uav):
+            if not uav.active:
+                terminated_matrix.append(False)
+                continue
             '''
             if not uav.position.is_in_area(area) or self.check_collision(i, uav):
                 terminated_matrix.append(True)
@@ -939,6 +1202,8 @@ class CruiseUAVWithMap(Cruise):
     def check_collision(self, current_uav_index, uav) -> bool:
         collision = False
         for j, other_uav in enumerate(self.uav):
+            if not other_uav.active:
+                continue
             if j != current_uav_index:
                 if uav.position.calculate_distance_to_coordinate(other_uav.position) <= self.collision_distance:
                     collision = True
@@ -948,6 +1213,8 @@ class CruiseUAVWithMap(Cruise):
     def check_if_are_too_close(self, uav_index, position):
         too_close = False
         for j in range(uav_index):
+            if not self.uav[j].active:
+                continue
             if self.uav[j].position.calculate_distance_to_coordinate(position) <= self.minimum_starting_distance_between_uav:
                 too_close = True
                 break
@@ -966,19 +1233,11 @@ class CruiseUAVWithMap(Cruise):
                 color = pixel.color  # Assumendo sia una tupla (R, G, B)
                 canvas.set_at((col, self.window_height - 1 - row), color)
 
-        # WALL
-        '''
-        for wall in self.world:
-            pygame.draw.line(canvas,
-                             Color.BLACK.value,
-                             self.convert_point(wall.start),
-                             self.convert_point(wall.end),
-                             self.wall_width)
-        '''
+        
 
         # Disegna i GU (Ground Units) con la loro immagine
         for gu in self.gu:
-            gu_image_path = os.path.join(image_dir, gu.getImage())
+            gu_image_path = os.path.join(image_dir, gu.get_image())
             gu_image = pygame.image.load(gu_image_path)
             canvas.blit(gu_image, self.image_convert_point(gu.position))
 
@@ -989,18 +1248,15 @@ class CruiseUAVWithMap(Cruise):
             canvas.blit(drone_image, self.image_convert_point(uav.position))
 
     def convert_point(self, point: Coordinate) -> Tuple[int, int]:
-        pygame_x = (round(point.x_coordinate)
-                    + self.x_offset)
-        pygame_y = (self.window_height
-                    - round(point.y_coordinate)
-                    + self.y_offset)
+        pygame_x = (round(point.x_coordinate))
+        pygame_y = (self.window_height - round(point.y_coordinate))
         return pygame_x, pygame_y
 
     def image_convert_point(self, point: Coordinate) -> Tuple[int, int]:
         shiftX = 15
         shiftY = 15
-        pygame_x = (round(point.x_coordinate) - shiftX + self.x_offset)
-        pygame_y = (self.window_height - round(point.y_coordinate) - shiftY + self.y_offset)
+        pygame_x = (round(point.x_coordinate) - shiftX)
+        pygame_y = (self.window_height - round(point.y_coordinate) - shiftY)
         return pygame_x, pygame_y
 
     
@@ -1010,6 +1266,8 @@ class CruiseUAVWithMap(Cruise):
         out_area = False
         area = self.np_random.choice(self.grid.available_area)
         for i, uav in enumerate(self.uav):
+            if not uav.active:
+                continue
             if self.check_collision(i, uav):
                 collision = True
                 break
@@ -1017,11 +1275,12 @@ class CruiseUAVWithMap(Cruise):
                 out_area = True
                 break
         
-        RCR = str(self.gu_covered/len(self.gu))
+        active_gu_count = len([gu for gu in self.gu if gu.active])
+        RCR = str(self.gu_covered / active_gu_count if active_gu_count > 0 else 0)
         
-        if self.options["test"]:
+        if self.options.get("test", False):
             return {"GU coperti": str(self.gu_covered), "Ground Users": str(
-                len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area, 
+                active_gu_count), "RCR": RCR, "Collision": collision, "Out_Area" : out_area, 
                 "boundary_penalty_total": self.boundary_penalty_total, 
                 "collision_penalty_total": self.collision_penalty_total,
                 "spatial_coverage_total": self.spatial_coverage_total,
@@ -1030,5 +1289,5 @@ class CruiseUAVWithMap(Cruise):
                 "gu_coverage_total": self.gu_coverage_total}
             
         return {"GU coperti": str(self.gu_covered), "Ground Users": str(
-            len(self.gu)), "RCR": RCR, "Collision": collision, "Out_Area" : out_area}
+            active_gu_count), "RCR": RCR, "Collision": collision, "Out_Area" : out_area}
 

@@ -116,52 +116,35 @@ def process_state_batch(state_batch):
 
     return map_exploration_batch, uav_info_batch, connected_gu_positions_batch, uav_mask_batch, gu_mask_batch, uav_flags_batch
 
-def get_uniform_options():
-    return ({
-        "uav": args.uav_number,
-        "gu": args.starting_gu_number*args.uav_number,
-        "clustered": False,
-        "clusters_number": 0,
-        "variance": 0
-    })
+def get_set_up(round_robin):
 
-def get_clustered_options():
-    variance = random.randint(args.clusters_variance_min, args.clusters_variance_max)
+    if round_robin:
+        options = {
+            "uav": args.uav_number,
+            "gu": args.starting_gu_number,
+            "environment_type": args.environment_type,
+            "test": True
+        }
 
-    return ({
-        "uav": args.uav_number,
-        "gu": args.starting_gu_number*args.uav_number,
-        "clustered": True,
-        "clusters_number": args.clusters_number*args.uav_number,
-        "variance": variance
-    })
+        if args.uav_number_random:
+            # Incrementa args.uav_number
+            args.uav_number += 1
 
-def get_set_up():
-    '''
-    if args.uav_number == args.max_uav_number:
-        args.uav_number = 1
+            # Resetta se supera il massimo
+            if args.uav_number > args.max_uav_number:
+                args.uav_number = 1
     else:
-        args.uav_number += 1
-
-    sample = random.random()
-    if sample > 0.5:
-        options = get_clustered_options()
-    else:
-        options = get_uniform_options()
-    ''' 
-    options = {
-        "uav": args.uav_number,
-        "gu": args.starting_gu_number,
-        "clustered": args.clustered,
-        "clusters_number": args.clusters_number,
-        "variance": args.clusters_variance_min,
-        "test": False
-    }
+        options = {
+            "uav": args.uav_number,
+            "gu": args.starting_gu_number,
+            "environment_type": args.environment_type,
+            "test": True
+        }  
+        
     return options
 
 def test(agent, num_episodes=32, global_step=0):
-    args.seed = int(time.perf_counter())
-    args.options = get_set_up()
+    args.options = None
     env = gym.make('gym_cruising_v2:Cruising-v0', args=args, render_mode=args.render_mode)
     agent.eval()
     total_rewards = []
@@ -178,16 +161,9 @@ def test(agent, num_episodes=32, global_step=0):
     gu_coverage_rewards = []
     
     for ep in range(num_episodes):
-        options = {
-            "uav": args.uav_number,
-            "gu": args.starting_gu_number,
-            "clustered": args.clustered,
-            "clusters_number": args.clusters_number,
-            "variance": args.clusters_variance_min,
-            "test": True
-        }
+        args.options = get_set_up(True)
         np.random.seed(ep)
-        state, info = env.reset(seed=ep, options=options)
+        state, info = env.reset(seed=None, options=args.options)
         done = False
         steps = 0
         sum_episode_reward = np.zeros(args.max_uav_number)
@@ -273,7 +249,7 @@ def test(agent, num_episodes=32, global_step=0):
         homogenous_voronoi_partition_incentive_rewards.append(sum_homogenous_voronoi_partition_incentive_total)
         gu_coverage_rewards.append(sum_gu_coverage_total)
         
-        print(f"Episode {ep + 1}: uav_number = {options['uav']}, starting_gu = {options['gu']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_areas = {sum_out_area}, collisions = {sum_collision},\n"
+        print(f"Episode {ep + 1}: uav_number = {args.options['uav']}, starting_gu = {args.options['gu']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_areas = {sum_out_area}, collisions = {sum_collision},\n"
               f"boundary_penalty_total = {sum_boundary_penalty_total:.2f}, collision_penalty_total = {sum_collision_penalty_total:.2f}, spatial_coverage_total = {sum_spatial_coverage_total:.2f},\n"
               f"exploration_incentive_total = {sum_exploration_incentive_total:.2f}, homogenous_voronoi_partition_incentive_total = {sum_homogenous_voronoi_partition_incentive_total:.2f}, gu_coverage_total = {sum_gu_coverage_total:.2f}\n")
 
@@ -395,8 +371,9 @@ if __name__ == "__main__":
         model_path_test = os.path.join(project_root, "neural_network", f"{args.exp_name}_test.pth")
         ppo_net = PPONet(embed_dim=args.embedded_dim, max_uav_number=args.max_uav_number, map_size=(args.window_height*args.resolution, args.window_width*args.resolution), patch_size=args.patch_size, global_value=args.global_value).to(device)
         
-        args.seed = int(time.perf_counter())
-        args.options = get_set_up()
+        args.options = {
+            "test": False
+        }
         envs = gym.make_vec('gym_cruising_v2:Cruising-v0', num_envs=args.num_envs, vectorization_mode="async", args=args, render_mode=args.render_mode)
         #print(envs.metadata["autoreset_mode"])
         optimizer = optim.Adam(ppo_net.parameters(), lr=args.learning_rate, weight_decay=1e-5)
@@ -428,7 +405,7 @@ if __name__ == "__main__":
                 print("\n<------------------------->")
                 print(f"Testing at update {update}")
                 test_time = time.time()
-                test(agent=ppo_net, num_episodes=10, global_step=global_step)
+                test(agent=ppo_net, num_episodes=args.num_test_episodes, global_step=global_step)
                 torch.save(ppo_net.state_dict(), model_path_test)
                 print(f"Tested! Time elaplesed {time.time() - test_time}")
                 print("<------------------------->\n")
@@ -672,7 +649,7 @@ if __name__ == "__main__":
             print(f"PPO update time: {ppo_end_time - ppo_start_time:.2f} seconds")
             torch.cuda.empty_cache()
             
-        test(agent=ppo_net, num_episodes=10, global_step=global_step)
+        test(agent=ppo_net, num_episodes=args.num_test_episodes, global_step=global_step)
         
         torch.save(ppo_net.state_dict(), model_path)
     
@@ -697,4 +674,4 @@ if __name__ == "__main__":
         ppo_net.load_state_dict(torch.load(model_path))
 
         # Test the trained model
-        test(ppo_net, 256, 0)
+        test(ppo_net, args.num_test_episodes, 0)

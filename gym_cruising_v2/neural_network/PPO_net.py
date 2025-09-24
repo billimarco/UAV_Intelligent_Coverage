@@ -62,12 +62,13 @@ class PPONet(nn.Module):
             actions = actions * uav_mask.unsqueeze(-1).float()  # Dove la maschera è True (UAV reale), lascia le azioni intatte
         else:
             # Invertiamo il tanh: azione è già squashed, la "desquashiamo"
+            actions = actions.clamp(min=-1 + 1e-5, max=1 - 1e-5)
             raw_actions = torch.atanh(actions)  # Invertiamo il tanh per ottenere l'azione grezza
 
             
         # log_probs con correzione di tanh (importante per backprop)
         log_probs = dist.log_prob(raw_actions).sum(-1)  # (B, U)
-        log_probs -= torch.log(1 - actions.pow(2).clamp(max=1 - 1e-5) + 1e-5).sum(-1) # correzione tanh
+        log_probs -= torch.log(torch.clamp(1 - actions.pow(2), min=1e-5)).sum(-1)# correzione tanh
 
         # Applicare la maschera ai log_probs: forzare i log_probs degli UAV fittizi a 0
         log_probs = log_probs * uav_mask.float()  # Dove la maschera è True (UAV reale), lascia i log_probs intatti

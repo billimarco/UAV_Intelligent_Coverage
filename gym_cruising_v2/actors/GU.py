@@ -7,23 +7,33 @@ class GU:
     last_shift_y: float
     covered: bool
     channels_state = []
+    active: bool
 
-    def __init__(self, id: int, position: Coordinate) -> None:
+    def __init__(self, id: int, position: Coordinate, active: bool) -> None:
         self.id = id
         self.position = position
         self.last_shift_x = 0.0
         self.last_shift_y = 0.0
         self.covered = False
         self.channels_state = []
+        self.active = active
 
-    def getImage(self):
+    def reset(self, position: Coordinate, active: bool) -> None:
+        self.position = position
+        self.last_shift_x = 0.0
+        self.last_shift_y = 0.0
+        self.covered = False
+        self.channels_state = []
+        self.active = active
+        
+    def get_image(self):
         if self.covered:
             return 'green30.png'
         return 'white30.png'
 
 
-    def setCovered(self, covered: bool):
+    def set_covered(self, covered: bool):
         self.covered = covered
 
-    def setChannelsState(self, channels_state):
+    def set_channels_state(self, channels_state):
         self.channels_state = channels_state
