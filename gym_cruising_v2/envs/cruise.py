@@ -43,23 +43,11 @@ class Cruise(Env):
         
         self.resolution = args.resolution
         
-        if args.random_seed:
-            self.seed = random.randint(0, 10000)
-        else:
-            self.seed = args.seed
-        self.options = args.options
-        
     def reset(self, seed=None, options=None) -> Tuple[np.ndarray, dict]:
 
-        if seed is not None:
-            self.seed = seed
+        super().reset(seed=seed, options=options)
 
-        if options is not None:
-            self.options = options
-
-        super().reset(seed=self.seed, options=self.options)
-
-        self.init_environment(options=self.options)
+        self.init_environment(options=options)
 
         observation = self.get_observation()
         '''

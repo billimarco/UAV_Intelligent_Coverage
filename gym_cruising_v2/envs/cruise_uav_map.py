@@ -25,6 +25,14 @@ class CruiseUAVWithMap(Cruise):
     def __init__(self, args, render_mode=None) -> None:
         super().__init__(args, render_mode)
         
+        self.random_seed= args.random_seed
+        
+        if self.random_seed:
+            self.seed = random.randint(0, 10000)
+        else:
+            self.seed = args.seed
+        self.options = args.options
+        
         self.max_uav_number = args.max_uav_number
         self.uav_number = args.uav_number
         self.max_speed_uav = args.max_speed_uav # m/s
@@ -158,12 +166,17 @@ class CruiseUAVWithMap(Cruise):
     def reset(self, seed=None, options: Optional[dict] = None) -> Tuple[np.ndarray, dict]:
         if seed is not None:
             self.seed = seed
+        elif self.random_seed:
+            self.seed = random.randint(0, 10000)
+        else:
+            self.seed = self.args.seed
+            
+        np.random.seed(self.seed)
 
         if options is not None:
             self.options = options
-            
-        self.seed = random.randint(0, 10000)
-        np.random.seed(self.seed)
+        else:
+            self.options = self.args.options
         
         if self.environment_type_random:
             self.environment_type = self.np_random.choice(["uniform", "cluster", "road", "road_cluster", "random"])
@@ -179,14 +192,6 @@ class CruiseUAVWithMap(Cruise):
                 self.starting_gu_number = self.options["gu"]
             if "environment_type" in self.options:
                 self.environment_type = self.options["environment_type"]
-            if self.environment_type == "cluster":
-                if self.clusters_number_random:
-                    self.clusters_number = self.np_random.integers(1, min(self.starting_gu_number, self.max_gu_number)//2 + 1)
-                if self.clusters_variance_random:
-                    self.clusters_variance = self.np_random.uniform(self.clusters_variance_min, self.clusters_variance_max)
-            else:
-                self.clusters_number = 0
-                self.clusters_variance = 0.0
                 
         self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
@@ -219,7 +224,6 @@ class CruiseUAVWithMap(Cruise):
         self.last_unexplored_area_points = self.grid.grid_width*self.grid.grid_height
         self.new_explored_area_points = 0
         self.reset_observation_action_space()
-        np.random.seed(self.seed)
         return super().reset(seed=self.seed, options=self.options)
 
     
@@ -1023,7 +1027,7 @@ class CruiseUAVWithMap(Cruise):
             homogenous_voronoi_partition_incentive = -(mad / max_mad)
             homogenous_voronoi_partition_incentive = np.clip(homogenous_voronoi_partition_incentive, -1, 0)
 
-            self.homogenous_voronoi_partition_incentive_total = self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive * num_uav
+            self.homogenous_voronoi_partition_incentive_total = self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive * self.uav_number
             
             for i in range(len(self.uav)):
                 if not self.uav[i].active:

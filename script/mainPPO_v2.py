@@ -161,7 +161,7 @@ def test(agent, num_episodes=32, global_step=0):
     gu_coverage_rewards = []
     
     for ep in range(num_episodes):
-        args.options = get_set_up(True)
+        args.options = get_set_up(args.round_robin)
         np.random.seed(ep)
         state, info = env.reset(seed=None, options=args.options)
         done = False

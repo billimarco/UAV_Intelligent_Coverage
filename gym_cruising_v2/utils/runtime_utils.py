@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-uniform-r",
+    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-cluster_rseed",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -73,7 +73,7 @@ def parse_args():
                         help="the max number of GUs in the environment")
     parser.add_argument("--min-gu-number", type=int, default=60,
                         help="the min number of GUs in the environment (only for gu-number-random True)")
-    parser.add_argument("--starting-gu-number", type=int, default=90,
+    parser.add_argument("--starting-gu-number", type=int, default=100,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--gu-max-speed", type=float, default=4.00,
                         help="max speed of ground units in meters per second")
@@ -118,27 +118,27 @@ def parse_args():
     
     
     # Environment specific arguments
-    parser.add_argument("--environment-type", type=str, default="uniform", nargs="?", const="random",
+    parser.add_argument("--environment-type", type=str, default="cluster", nargs="?", const="random",
                         help="Type of environment (e.g., uniform, cluster, road, road_cluster, random")
     parser.add_argument("--environment-random-spawn-despawn-gu" , type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, GUs can randomly spawn and despawn during the simulation")
-    parser.add_argument("--environment-gu-bounce", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--environment-gu-bounce", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, GUs bounce when they reach the environment boundaries else they despawn")
     # ALL ENV TYPES RESET RANDOM VARIANTS
     parser.add_argument("--environment-type-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the environment type is randomly chosen between uniform, cluster, road, road_cluster, random else is fixed to environment-type")
-    parser.add_argument("--uav-number-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--uav-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of UAVs is random between 1 and max-uav-number else is fixed to uav-number")
-    parser.add_argument("--gu-number-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--gu-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of GUs is random between min-gu-number and max-gu-number else is fixed to starting-gu-number")
     # CLUSTER ENV TYPE RANDOM VARIANTS
-    parser.add_argument("--clusters-movement", type=str, default="stationary", nargs="?", const="random",
+    parser.add_argument("--clusters-movement", type=str, default="independent", nargs="?", const="random",
                         help="How clusters of GU moves (e.g., fleet (same direction), stationary (all GUs stopped), independent (each GU random direction), random (each cluster have different movement type))")
     parser.add_argument("--clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of clusters is random between 1 and clusters-number else is fixed to clusters-number")
     parser.add_argument("--clusters-variance-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the variance of clusters is random between clusters-variance-min and clusters-variance-max else is fixed to clusters-variance-min")
-    parser.add_argument("--clusters-gu-uniform-partition", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--clusters-gu-uniform-partition", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, Every cluster has the same number of GUs else the GUs are randomly partitioned")
     # CLUSTER ENV TYPE FIXED VARIANTS
     parser.add_argument("--clusters-number", type=int, default=1,
@@ -238,14 +238,14 @@ def parse_args():
     # Test specific arguments
     parser.add_argument("--updates-per-test", type=int, default=20,
                         help="the number of updates before a test")
-    parser.add_argument("--num-test-episodes", type=int, default=12,
+    parser.add_argument("--num-test-episodes", type=int, default=9,
                         help="the number of episodes to test the agent")
-    parser.add_argument("--round-robin", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--round-robin", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help=("If enabled, the test environment will increase the number of UAVs by one in each episode "
                         "(round-robin style). Once the number of UAVs exceeds `max_uav_number`, it resets back to 1. "
                         "If disabled, the environment will use a fixed number of UAVs as specified by `--uav-number`."
                         ))
-    parser.add_argument("--test-steps-after-trunc", type=int, default=300,
+    parser.add_argument("--test-steps-after-trunc", type=int, default=500,
                         help="the number of steps in a test enviroment before a truncation")
     
 
