@@ -62,6 +62,17 @@ class CruiseUAVWithMap(Cruise):
         self.clusters_variance_min = args.clusters_variance_min
         self.clusters_variance_max = args.clusters_variance_max
         
+        self.roads_gu_arrival_distribution = args.roads_gu_arrival_distribution
+        self.roads_number_random = args.roads_number_random
+        self.roads_lane_width_random = args.roads_lane_width_random
+        self.roads_gu_uniform_partition = args.roads_gu_uniform_partition
+        self.per_roads_clusters_number_random = args.per_roads_clusters_number_random
+        self.roads_lane_width_min = args.roads_lane_width_min
+        self.roads_lane_width_max = args.roads_lane_width_max
+        self.roads_number = args.roads_number
+        self.roads_increased_max_speed = args.roads_increased_max_speed
+        self.per_roads_clusters_number = args.per_roads_clusters_number
+        
         self.w_boundary_penalty = args.w_boundary_penalty
         self.w_collision_penalty = args.w_collision_penalty
         self.w_spatial_coverage = args.w_spatial_coverage
@@ -265,6 +276,10 @@ class CruiseUAVWithMap(Cruise):
             self.init_gu_uniform()
         elif self.environment_type == "cluster":
             self.init_gu_cluster()
+        elif self.environment_type == "road":
+            self.init_gu_road()
+        elif self.environment_type == "road_cluster":
+            self.init_gu_road_cluster()
         else:
             self.init_gu_uniform()
             
@@ -323,14 +338,17 @@ class CruiseUAVWithMap(Cruise):
         
         gu_id = 0  # Contatore globale per l'ID dei GU
         for i in range(number_of_clusters):
-            mean_x = self.np_random.uniform(area[0][0], area[0][1])
-            mean_y = self.np_random.uniform(area[1][0], area[1][1])
             
             if self.clusters_variance_random:
                 variance = self.np_random.uniform(self.clusters_variance_min, self.clusters_variance_max)
             else:
                 variance = self.clusters_variance_min
             std_dev = np.sqrt(variance)
+            dispersion = 3 * std_dev
+            
+            mean_x = self.np_random.uniform(area[0][0] + dispersion, area[0][1] - dispersion)
+            mean_y = self.np_random.uniform(area[1][0] + dispersion, area[1][1] - dispersion)
+            
             
             if self.clusters_movement == "random":
                 movement_type = self.np_random.choice(["fleet", "stationary", "independent"])
@@ -370,6 +388,373 @@ class CruiseUAVWithMap(Cruise):
             gu = GU(i, Coordinate(0, 0, 0), False)
             self.init_channel(gu)
             self.gu[i] = gu # GU non attivo
+    
+    def init_gu_road(self):
+        area = self.np_random.choice(self.grid.available_area)
+        xmin, xmax = area[0]
+        ymin, ymax = area[1]
+        
+        if self.roads_number_random:
+            number_of_roads = self.np_random.integers(1, self.roads_number + 1)
+        else:
+            number_of_roads = self.clusters_number
+        
+        if self.roads_gu_uniform_partition: 
+            # Numero base di GU per road
+            gu_for_road = self.starting_gu_number // number_of_roads
+            remainder = self.starting_gu_number % number_of_roads
+
+            # Ogni road ha almeno gu_for_road
+            parts = [gu_for_road] * number_of_roads
+
+            # Distribuisci il resto aggiungendo 1 ai primi 'remainder' road
+            for i in range(remainder):
+                parts[i] += 1
+
+            # Ora calcoliamo max_parts
+            extra_gu = self.max_gu_number - self.starting_gu_number
+            extra_per_road = extra_gu // number_of_roads
+            extra_remainder = extra_gu % number_of_roads
+
+            max_parts = [parts[i] + extra_per_road for i in range(number_of_roads)]
+            for i in range(extra_remainder):
+                max_parts[i] += 1
+        else:
+            # Partizione casuale
+            cut_points = sorted(random.sample(range(1, self.starting_gu_number), number_of_roads - 1))
+            cut_points = [0] + cut_points + [self.starting_gu_number]
+            parts = [cut_points[i+1] - cut_points[i] for i in range(number_of_roads)]
+
+            # max_parts
+            extra_gu = self.max_gu_number - self.starting_gu_number
+            extra_cut_points = sorted(random.sample(range(1, self.max_gu_number), number_of_roads - 1))
+            extra_cut_points = [0] + extra_cut_points + [self.max_gu_number]
+            max_parts = [extra_cut_points[i+1] - extra_cut_points[i] for i in range(number_of_roads)]
+        
+        
+        gu_id = 0  # Contatore globale per l'ID dei GU
+        for i in range(number_of_roads):
+            
+            if self.roads_gu_arrival_distribution == "random":
+                roads_gu_arr_distribution = self.np_random.choice(["uniform", "poisson"])
+            else:
+                roads_gu_arr_distribution = self.roads_gu_arrival_distribution
+        
+            if self.roads_lane_width_random:
+                roads_lane_width = self.np_random.uniform(self.roads_lane_width_min, self.roads_lane_width_max)
+            else:
+                roads_lane_width = self.roads_lane_width_min
+
+            # Genera il bordo dello start
+            start_edge = random.randint(0, 3)
+            if start_edge == 0:  # bottom (inverti cat1 e cat2 rispetto a top per coerenza angolare)
+                x0 = random.uniform(xmin, xmax)
+                y0 = ymin
+                start_center = (x0, y0)
+                cat1 = x0 - xmin
+                cat2 = xmax - x0
+                base_angle = 90
+
+            elif start_edge == 1:  # right (inverti cat1 e cat2 rispetto a top per coerenza angolare)
+                x0 = xmax
+                y0 = random.uniform(ymin, ymax)
+                start_center = (x0, y0)
+                cat1 = y0 - ymin
+                cat2 = ymax - y0
+                base_angle = 180
+
+            elif start_edge == 2:  # top
+                x0 = random.uniform(xmin, xmax)
+                y0 = ymax
+                start_center = (x0, y0)
+                cat1 = xmax - x0
+                cat2 = x0 - xmin
+                base_angle = 270
+
+            else:  # left
+                x0 = xmin
+                y0 = random.uniform(ymin, ymax)
+                start_center = (x0, y0)
+                cat1 = ymax - y0
+                cat2 = y0 - ymin
+                base_angle = 0
+                
+            angle_max = math.atan((cat1 - roads_lane_width) / roads_lane_width) + math.radians(base_angle)
+            angle_min = -math.atan((cat2 - roads_lane_width) / roads_lane_width) + math.radians(base_angle)
+            #angle_max_deg = math.degrees(angle_max)
+            #angle_min_deg = math.degrees(angle_min)
+
+            # Campiona un angolo casuale
+            theta = random.uniform(angle_min, angle_max)
+
+            # Direzione come vettore unitario
+            ux = math.cos(theta)
+            uy = math.sin(theta)
+            ts = []
+
+            # Calcola i t di intersezione con i bordi
+            if ux > 1e-12:
+                ts.append(((xmax - x0) / ux, 'xmax'))
+            if ux < -1e-12:
+                ts.append(((xmin - x0) / ux, 'xmin'))
+            if uy > 1e-12:
+                ts.append(((ymax - y0) / uy, 'ymax'))
+            if uy < -1e-12:
+                ts.append(((ymin - y0) / uy, 'ymin'))
+
+            # Filtra solo i t positivi
+            t_candidates = [(t, side) for (t, side) in ts if t > 1e-9]
+            if not t_candidates:
+                return None  # Nessuna intersezione valida trovata
+
+            # Prendi il t più piccolo => punto di uscita più vicino
+            t, _ = min(t_candidates, key=lambda it: it[0])
+
+            # Calcola end_center con clamping ai limiti
+            end_x = max(min(x0 + t * ux, xmax), xmin)
+            end_y = max(min(y0 + t * uy, ymax), ymin)
+            end_center = (end_x, end_y)
+                        
+            x1, y1 = start_center
+            x2, y2 = end_center
+
+            # vettore perpendicolare normalizzato
+            px, py = -uy, ux
+
+            scale = 10_000  # molto grande rispetto alla dimensione dell'area
+            left_line_start  = (x1 + px * roads_lane_width - ux * scale, y1 + py * roads_lane_width - uy * scale)
+            left_line_end    = (x2 + px * roads_lane_width + ux * scale, y2 + py * roads_lane_width + uy * scale)
+            right_line_start = (x1 - px * roads_lane_width - ux * scale, y1 - py * roads_lane_width - uy * scale)
+            right_line_end   = (x2 - px * roads_lane_width + ux * scale, y2 - py * roads_lane_width + uy * scale)
+
+            edges = [
+                ((xmin, ymin), (xmax, ymin)),  # bordo inferiore
+                ((xmax, ymin), (xmax, ymax)),  # bordo destro
+                ((xmax, ymax), (xmin, ymax)),  # bordo superiore
+                ((xmin, ymax), (xmin, ymin)),  # bordo sinistro
+            ]
+
+            # Funzione per intersezione tra segmenti
+            def segment_intersection(a1, a2, b1, b2):
+                x1, y1 = a1
+                x2, y2 = a2
+                x3, y3 = b1
+                x4, y4 = b2
+
+                denom = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4)
+                if abs(denom) < 1e-12:
+                    return None  # paralleli o quasi paralleli
+
+                t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / denom
+                u = ((y1-y2)*(x1-x3) - (x1-x2)*(y1-y3)) / denom
+
+                if 0 <= t <= 1 and 0 <= u <=1:
+                    ix = x1 + t * (x2 - x1)
+                    iy = y1 + t * (y2 - y1)
+                    eps = 1e-6 * max(xmax - xmin, ymax - ymin)
+                    # Snap ai bordi della mappa se molto vicini
+                    if abs(ix - xmin) < eps: ix = xmin
+                    elif abs(ix - xmax) < eps: ix = xmax
+                    if abs(iy - ymin) < eps: iy = ymin
+                    elif abs(iy - ymax) < eps: iy = ymax
+
+                    return (ix, iy)
+                return None
+
+            # Trova intersezioni
+            left_intersections = []
+            right_intersections = []
+
+            for edge_start, edge_end in edges:
+                li = segment_intersection(left_line_start, left_line_end, edge_start, edge_end)
+                if li:
+                    left_intersections.append(li)
+                ri = segment_intersection(right_line_start, right_line_end, edge_start, edge_end)
+                if ri:
+                    right_intersections.append(ri)
+
+            # Ordina in base alla distanza dal centro
+            def dist(p): return np.hypot(p[0]-start_center[0], p[1]-start_center[1])
+            left_intersections.sort(key=dist)
+            right_intersections.sort(key=dist)
+
+            if len(left_intersections) < 2 or len(right_intersections) < 2:
+                raise ValueError("La strada non attraversa completamente l'ambiente")
+
+            left_entry, left_exit = left_intersections[0], left_intersections[-1]
+            right_entry, right_exit = right_intersections[0], right_intersections[-1]
+            
+            # Funzione per trovare il bordo correlato ad un punto
+            def find_edge(point):
+                px, py = point
+                for edge_start, edge_end in edges:
+                    x1, y1 = edge_start
+                    x2, y2 = edge_end
+                    # Bordo verticale
+                    if x1 == x2 and abs(px - x1) < 1e-9 and min(y1, y2) <= py <= max(y1, y2):
+                        return (edge_start, edge_end)
+                    # Bordo orizzontale
+                    if y1 == y2 and abs(py - y1) < 1e-9 and min(x1, x2) <= px <= max(x1, x2):
+                        return (edge_start, edge_end)
+                return None
+            
+            # Funzione per generare i punti di ingresso e uscita della strada
+            def generate_path_points_uniform(p_start, p_end, edges, total_points):
+                # Trova gli edge di partenza e arrivo
+                edge_start = find_edge(p_start)
+                edge_end = find_edge(p_end)
+                if edge_start is None or edge_end is None:
+                    raise ValueError("Uno dei punti non è sui bordi")
+
+                # Lista di segmenti attraversati in ordine
+                start_idx = edges.index(edge_start)
+                end_idx = edges.index(edge_end)
+                num_edges = len(edges)
+
+                segments = []
+                idx = start_idx
+                current_point = p_start
+                while True:
+                    next_point = edges[idx][1]
+                    segments.append((current_point, next_point))
+                    if idx == end_idx:
+                        segments[-1] = (current_point, p_end)  # segmento finale verso p_end
+                        break
+                    idx = (idx + 1) % num_edges
+                    current_point = edges[idx][0]
+
+                # Lunghezza totale e passo tra i punti
+                total_length = sum(np.hypot(s[1][0]-s[0][0], s[1][1]-s[0][1]) for s in segments)
+                step = total_length / (total_points - 1)
+
+                # Genera i punti lungo i segmenti
+                path = [segments[0][0]]
+                dist_accum = 0.0
+                seg_idx = 0
+                seg_p1, seg_p2 = segments[seg_idx]
+                while len(path) < total_points - 1:
+                    seg_len = np.hypot(seg_p2[0]-seg_p1[0], seg_p2[1]-seg_p1[1])
+                    if dist_accum + seg_len >= step:
+                        ratio = (step - dist_accum) / seg_len
+                        px = seg_p1[0] + (seg_p2[0] - seg_p1[0]) * ratio
+                        py = seg_p1[1] + (seg_p2[1] - seg_p1[1]) * ratio
+                        path.append((px, py))
+                        dist_accum = 0.0
+                        seg_p1 = (px, py)
+                    else:
+                        dist_accum += seg_len
+                        seg_idx += 1
+                        if seg_idx >= len(segments):
+                            break
+                        seg_p1, seg_p2 = segments[seg_idx]
+
+                path.append(p_end)
+                return path
+
+            # Genera punti ingresso e uscita
+            entry_points = generate_path_points_uniform(left_entry, right_entry, edges, total_points=10)
+            exit_points = generate_path_points_uniform(left_exit, right_exit, edges, total_points=10)
+            
+            # Lunghezza del percorso
+            segment_length = math.sqrt((end_center[0] - start_center[0])**2 + (end_center[1] - start_center[1])**2)
+
+            # Velocità media lungo il segmento
+            mean_speed = (self.roads_increased_max_speed + self.gu_max_speed) / 2
+
+            # Tempo medio per attraversare il segmento
+            mean_travel_time = segment_length / mean_speed
+
+            # Tasso di arrivo (GU per step) per distribuzione Poisson
+            entrance_rate = max_parts[i] / mean_travel_time
+            
+            group = {
+                "type": "road",
+                "ids": [],
+                "options": {
+                    "start_center": start_center,
+                    "end_center": end_center,
+                    "arrival_distribution": roads_gu_arr_distribution,
+                    "entrance_rate": entrance_rate,
+                    "max_gu_number": max_parts[i],
+                    "lane_width": roads_lane_width,
+                    "theta": theta,
+                    "entry_points": entry_points,
+                    "exit_points": exit_points
+                }
+            }
+            self.groups.append(group)
+            
+            dx = end_center[0] - start_center[0]
+            dy = end_center[1] - start_center[1]
+            
+            if roads_gu_arr_distribution == "uniform":
+                gu_positions = []
+                for t in np.linspace(0, parts[i]/max_parts[i], parts[i], endpoint=False):
+                    # posizione lungo il segmento centrale
+                    x_center = start_center[0] + t * dx
+                    y_center = start_center[1] + t * dy
+
+                    # spostamento casuale sulla larghezza della strada
+                    s = np.random.uniform(-roads_lane_width/2, roads_lane_width/2)
+                    x = x_center + s * px
+                    y = y_center + s * py
+                    # limitazione ai bordi sull'asse x
+                    x = max(xmin, min(x, xmax))
+                    y = max(ymin, min(y, ymax))
+
+                    gu_positions.append((x, y))
+
+            elif roads_gu_arr_distribution == "poisson":
+                gu_positions = []
+                # generiamo una posizione “virtuale” lungo la frazione iniziale della strada
+                segment_fraction = parts[i] / max_parts[i]
+                # Poisson: genera distanze relative tra i GU
+                lambd = entrance_rate  # tasso calcolato per max_parts[i]
+                distances = np.random.poisson(lam=1/lambd, size=parts[i])
+                
+                # Normalizziamo le distanze cumulativamente lungo la frazione iniziale
+                cum_dist = np.cumsum(distances)
+                if cum_dist[-1] == 0:
+                    # Se tutte le distanze sono zero, distribuiamo uniformemente lungo la frazione
+                    cum_dist = np.linspace(0, segment_fraction, len(distances))
+                else:
+                    cum_dist = cum_dist / cum_dist[-1] * segment_fraction
+
+                for t in cum_dist:
+                    # posizione lungo il segmento centrale
+                    x_center = start_center[0] + t * dx
+                    y_center = start_center[1] + t * dy
+
+                    # spostamento casuale trasversale alla strada
+                    s = np.random.uniform(-roads_lane_width/2, roads_lane_width/2)
+                    x = x_center + s * px
+                    y = y_center + s * py
+                    x = max(xmin, min(x, xmax))
+                    y = max(ymin, min(y, ymax))
+
+                    gu_positions.append((x, y))
+                
+            for pos in gu_positions:
+                x_coordinate, y_coordinate = pos
+                position = Coordinate(x_coordinate, y_coordinate, 0)
+                
+                gu = GU(gu_id, position, True)
+                self.init_channel(gu)
+                self.gu[gu_id] = gu
+                group["ids"].append(gu_id)
+                gu_id += 1  # Incrementa l'ID globale
+                
+        # Inizializza i GU non attivi
+        for i in range(gu_id, self.max_gu_number):
+            gu = GU(i, Coordinate(0, 0, 0), False)
+            self.init_channel(gu)
+            self.gu[i] = gu # GU non attivo
+        
+        
+
+    
+    def init_gu_road_cluster(self):
+        return
 
     def init_channel(self, gu):
         for uav in self.uav:
@@ -387,6 +772,7 @@ class CruiseUAVWithMap(Cruise):
                 gu.channels_state.append(1)  # 1 = NLoS
             '''
             gu.channels_state.append(0)
+            
 
 
     # GET OBSERVATION
@@ -544,6 +930,10 @@ class CruiseUAVWithMap(Cruise):
                 self.move_GU_uniform(group, area)
             elif group["type"] == "cluster":
                 self.move_GU_cluster(group, area)
+            elif group["type"] == "road":
+                self.move_GU_road(group, area)
+            elif group["type"] == "road_cluster":
+                self.move_GU_road_cluster(group, area)
             else:
                 self.move_GU_uniform(group, area)
     
@@ -554,7 +944,13 @@ class CruiseUAVWithMap(Cruise):
             repeat_until_in_area = True
             while repeat_until_in_area:
                 # Sample distance from truncnorm [0, max_distance]
-                distance = truncnorm.rvs(0, 1, loc=0, scale=self.gu_max_speed)
+                max_speed = self.gu_max_speed
+                min_speed = 0
+                mean = (self.gu_max_speed)/2
+                sigma = 1
+                a = (min_speed - mean)/sigma
+                b = (max_speed - mean)/sigma
+                distance = truncnorm.rvs(a, b, loc=mean, scale=sigma)
                 
                 # Uniform random direction
                 theta = np.random.uniform(0, 2*np.pi)
@@ -595,7 +991,15 @@ class CruiseUAVWithMap(Cruise):
             repeat_until_in_area = True
             while repeat_until_in_area:
                 # --- Calcolo spostamento casuale ---
-                distance = truncnorm.rvs(0, 1, loc=0, scale=self.gu_max_speed)
+                # Sample distance from truncnorm [0, max_distance]
+                max_speed = self.gu_max_speed
+                min_speed = 0
+                mean = (self.gu_max_speed)/2
+                sigma = 1
+                a = (min_speed - mean)/sigma
+                b = (max_speed - mean)/sigma
+                distance = truncnorm.rvs(a, b, loc=mean, scale=sigma)
+                
                 theta = np.random.uniform(0, 2 * np.pi)
 
                 delta_x = distance * np.cos(theta)
@@ -653,7 +1057,98 @@ class CruiseUAVWithMap(Cruise):
         else:
             self.move_GU_uniform(group, area)
         
+    def move_GU_road(self, group, area):
+        # Itera su una COPIA della lista per evitare problemi durante la rimozione
+        for gu_id in group["ids"][:]:
+            gu = self.gu[gu_id]
+            # Sample distance from truncnorm [0, max_distance]
+            max_speed = self.gu_max_speed+self.roads_increased_max_speed
+            min_speed = 0
+            mean = (self.gu_max_speed+self.roads_increased_max_speed)/2
+            sigma = 1
+            a = (min_speed - mean)/sigma
+            b = (max_speed - mean)/sigma
+            distance = truncnorm.rvs(a, b, loc=mean, scale=sigma)
+            
+            delta_x = distance * np.cos(group["options"]["theta"])
+            delta_y = distance * np.sin(group["options"]["theta"])
+            # New position
+            new_position = Coordinate(
+                gu.position.x_coordinate + delta_x,
+                gu.position.y_coordinate + delta_y,
+                0
+            )
+            if new_position.is_in_area(area):
+                gu.position = new_position
+                gu.last_shift_x = delta_x
+                gu.last_shift_y = delta_y
+            else:
+                gu.reset(Coordinate(0, 0, 0), False)
+                group["ids"].remove(gu_id)
+        
+        # Spawn nuovi GU
+        entrance_rate = group["options"]["entrance_rate"]
+        max_gu_number = group["options"]["max_gu_number"]
+        current_gu = len(group["ids"])
 
+        # Numero di GU da inserire questo step
+        if group["options"]["arrival_distribution"] == "poisson":
+            new_gu_count = np.random.poisson(entrance_rate)
+        elif group["options"]["arrival_distribution"] == "uniform":  # uniform
+            # Numero intero di GU
+            new_gu_count = math.floor(entrance_rate)
+            # Probabilità di generare un GU extra se parte frazionaria
+            if np.random.rand() < (entrance_rate - new_gu_count):
+                new_gu_count += 1
+
+        # Non superare il massimo
+        new_gu_count = min(new_gu_count, max_gu_number - current_gu)
+
+        if new_gu_count > 0:
+            entry_points = group["options"]["entry_points"]
+            exit_points = group["options"]["exit_points"]
+            
+            n_points = min(len(entry_points), len(exit_points))
+            available_idx_points = list(range(n_points))
+            random.shuffle(available_idx_points)  # ordine casuale iniziale
+
+            for _ in range(new_gu_count):
+                # Trova il primo GU con active == False
+                inactive_gu_indices = [i for i, gu in enumerate(self.gu) if not gu.active]
+                if inactive_gu_indices:
+                    id = inactive_gu_indices[0]  # Prende il primo
+                else:
+                    break
+                    
+                if not available_idx_points:  # se finisce la lista, ricomincia e rimescola
+                    available_idx_points = list(range(n_points))
+                    random.shuffle(available_idx_points)
+
+                idx = available_idx_points.pop()  # prendi un indice casuale e rimuovilo dalla lista
+                entry_p = entry_points[idx]
+                exit_p = exit_points[idx]
+
+                # vettore dal punto di ingresso a quello di uscita
+                dx = exit_p[0] - entry_p[0]
+                dy = exit_p[1] - entry_p[1]
+                segment_length = math.hypot(dx, dy)
+
+                # t massimo per non superare la distanza massima
+                t_max = min(1.0, (self.gu_max_speed+self.roads_increased_max_speed) / segment_length)
+
+                # posizione lungo il segmento, limitata da t_max
+                t = np.random.uniform(0, t_max)
+                x_coordinate = entry_p[0] + dx * t
+                y_coordinate = entry_p[1] + dy * t
+
+                position = Coordinate(x_coordinate, y_coordinate, 0)
+                new_gu = GU(id, position, True)
+                self.init_channel(new_gu)
+                self.gu[id] = new_gu
+                group["ids"].append(id)
+    
+    def move_GU_road_cluster(self, group, area):
+        return
 
     # DO CALCULATIONS AND REWARDS 
         
@@ -1123,9 +1618,9 @@ class CruiseUAVWithMap(Cruise):
                         '''
                         break
                         
-                inactive_indices = [j for j, gu in enumerate(self.gu) if not gu.active]
-                if inactive_indices:
-                    self.disappear_gu_prob = (self.spawn_gu_prob * 4) / len(inactive_indices)
+                inactive_gu_indices = [j for j, gu in enumerate(self.gu) if not gu.active]
+                if inactive_gu_indices:
+                    self.disappear_gu_prob = (self.spawn_gu_prob * 4) / len(inactive_gu_indices)
                 else:
                     self.disappear_gu_prob = 0.0
                     
@@ -1149,11 +1644,13 @@ class CruiseUAVWithMap(Cruise):
                         if area[0][0] <= x_coordinate <= area[0][1] and area[1][0] <= y_coordinate <= area[1][1]:
                             position = Coordinate(x_coordinate, y_coordinate, 0)
                             repeat = False
+                elif self.groups[group_index]["type"] == "road":
+                    continue
                             
                 # Trova il primo GU con active == False
-                inactive_indices = [i for i, gu in enumerate(self.gu) if not gu.active]
-                if inactive_indices:
-                    id = inactive_indices[0]  # Prende il primo
+                inactive_gu_indices = [i for i, gu in enumerate(self.gu) if not gu.active]
+                if inactive_gu_indices:
+                    id = inactive_gu_indices[0]  # Prende il primo
                 else:
                     id = -1  # Nessun GU inattivo trovato
                     
@@ -1162,7 +1659,7 @@ class CruiseUAVWithMap(Cruise):
                     self.init_channel(new_gu)
                     self.gu[id] = new_gu
                     self.groups[group_index]["ids"].append(id)
-                    self.disappear_gu_prob = (self.spawn_gu_prob * 4) / len(inactive_indices)
+                    self.disappear_gu_prob = (self.spawn_gu_prob * 4) / len(inactive_gu_indices)
                 else:
                     self.disappear_gu_prob = 0.0
     

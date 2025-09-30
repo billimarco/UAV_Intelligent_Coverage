@@ -116,30 +116,22 @@ def process_state_batch(state_batch):
 
     return map_exploration_batch, uav_info_batch, connected_gu_positions_batch, uav_mask_batch, gu_mask_batch, uav_flags_batch
 
-def get_set_up(round_robin):
+def get_set_up():
+    
+    if args.uav_number_random:
+        # Incrementa args.uav_number
+        args.uav_number += 1
 
-    if round_robin:
-        options = {
-            "uav": args.uav_number,
-            "gu": args.starting_gu_number,
-            "environment_type": args.environment_type,
-            "test": True
-        }
+        # Resetta se supera il massimo
+        if args.uav_number > args.max_uav_number:
+            args.uav_number = 1
 
-        if args.uav_number_random:
-            # Incrementa args.uav_number
-            args.uav_number += 1
-
-            # Resetta se supera il massimo
-            if args.uav_number > args.max_uav_number:
-                args.uav_number = 1
-    else:
-        options = {
-            "uav": args.uav_number,
-            "gu": args.starting_gu_number,
-            "environment_type": args.environment_type,
-            "test": True
-        }  
+    options = {
+        "uav": args.uav_number,
+        "gu": args.starting_gu_number,
+        "environment_type": args.environment_type,
+        "test": True
+    }
         
     return options
 
@@ -161,7 +153,7 @@ def test(agent, num_episodes=32, global_step=0):
     gu_coverage_rewards = []
     
     for ep in range(num_episodes):
-        args.options = get_set_up(args.round_robin)
+        args.options = get_set_up()
         np.random.seed(ep)
         state, info = env.reset(seed=None, options=args.options)
         done = False
@@ -415,7 +407,8 @@ if __name__ == "__main__":
                 frac = 1.0 - (update - 1.0) / args.updates
                 lrnow = frac * args.learning_rate
                 optimizer.param_groups[0]["lr"] = lrnow
-
+            
+            print("<------------------------->\n")
             print(f"Update {update + 1}/{args.updates}")
             
             # Rollout
@@ -622,9 +615,11 @@ if __name__ == "__main__":
             # Log training metrics
             y_true = flat_returns.cpu().numpy()
             y_pred = flat_values.cpu().numpy()
+            '''
             print("Primi 10 valori di y_true:", y_true[:10])
             print("Primi 10 valori di y_pred:", y_pred[:10])
             print("Differenze:", y_true[:10] - y_pred[:10])
+            '''
             var_y = np.var(y_true)
             var_diff = np.var(y_true - y_pred)
             print("Varianza di y_true:", var_y)
@@ -647,6 +642,7 @@ if __name__ == "__main__":
 
             ppo_end_time = time.time()
             print(f"PPO update time: {ppo_end_time - ppo_start_time:.2f} seconds")
+            print("<------------------------->\n")
             torch.cuda.empty_cache()
             
         test(agent=ppo_net, num_episodes=args.num_test_episodes, global_step=global_step)

@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-cluster_rseed",
+    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-road",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -21,7 +21,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=1,
+    parser.add_argument("--cuda-device", type=int, default=0,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -69,11 +69,11 @@ def parse_args():
     
     
     # GU specific arguments
-    parser.add_argument("--max-gu-number", type=int, default=120,
+    parser.add_argument("--max-gu-number", type=int, default=10,
                         help="the max number of GUs in the environment")
-    parser.add_argument("--min-gu-number", type=int, default=60,
+    parser.add_argument("--min-gu-number", type=int, default=1,
                         help="the min number of GUs in the environment (only for gu-number-random True)")
-    parser.add_argument("--starting-gu-number", type=int, default=100,
+    parser.add_argument("--starting-gu-number", type=int, default=5,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--gu-max-speed", type=float, default=4.00,
                         help="max speed of ground units in meters per second")
@@ -92,7 +92,7 @@ def parse_args():
                     help="meters for every pixel side (num of points for pixel side)")
     parser.add_argument("--uav-spawn-offset" , type=int, default=105,
                         help="the spawn offset for UAV of the environment in point")
-    parser.add_argument("--gu-spawn-offset" , type=int, default=30,
+    parser.add_argument("--gu-spawn-offset" , type=int, default=10,
                         help="the spawn offset for GU of the environment in point")
     parser.add_argument("--unexplored-point-max-steps", type=int, default=50,
                         help="maximum steps at which we define a point completely unexplored. Increments of maximum steps stops")
@@ -118,12 +118,12 @@ def parse_args():
     
     
     # Environment specific arguments
-    parser.add_argument("--environment-type", type=str, default="cluster", nargs="?", const="random",
+    parser.add_argument("--environment-type", type=str, default="road", nargs="?", const="random",
                         help="Type of environment (e.g., uniform, cluster, road, road_cluster, random")
     parser.add_argument("--environment-random-spawn-despawn-gu" , type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, GUs can randomly spawn and despawn during the simulation")
     parser.add_argument("--environment-gu-bounce", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-                        help="if toggled, GUs bounce when they reach the environment boundaries else they despawn")
+                        help="if toggled, GUs bounce when they reach the environment boundaries else they despawn (This is not intended for roads)")
     # ALL ENV TYPES RESET RANDOM VARIANTS
     parser.add_argument("--environment-type-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the environment type is randomly chosen between uniform, cluster, road, road_cluster, random else is fixed to environment-type")
@@ -132,7 +132,7 @@ def parse_args():
     parser.add_argument("--gu-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of GUs is random between min-gu-number and max-gu-number else is fixed to starting-gu-number")
     # CLUSTER ENV TYPE RANDOM VARIANTS
-    parser.add_argument("--clusters-movement", type=str, default="independent", nargs="?", const="random",
+    parser.add_argument("--clusters-movement", type=str, default="random", nargs="?", const="random",
                         help="How clusters of GU moves (e.g., fleet (same direction), stationary (all GUs stopped), independent (each GU random direction), random (each cluster have different movement type))")
     parser.add_argument("--clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of clusters is random between 1 and clusters-number else is fixed to clusters-number")
@@ -150,24 +150,26 @@ def parse_args():
     # ROAD ENV TYPE RANDOM VARIANTS
     parser.add_argument("--roads-gu-arrival-distribution", type=str, default="poisson", nargs="?", const="random",
                         help="Distribution for the arrival of GUs on the roads (e.g., uniform, poisson, random (choose between one of distributions))")
-    parser.add_argument("--roads-gu-arrival-rate", type=float, default=0.1,
-                        help="Rate (lambda) of the Poisson distribution for GU arrivals on roads (used if roads-gu-arrival-distribution is poisson)")
     parser.add_argument("--roads-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of roads is random between 1 and roads-number else is fixed to roads-number")
     parser.add_argument("--roads-lane-width-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the width of a single lane is random between roads-lane-width-min and roads-lane-width-max else is fixed to roads-lane-width-min")
+    parser.add_argument("--roads-gu-uniform-partition", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="if toggled, Every road has the same number of max theorical GUs else the max theorical GUs are randomly partitioned")
     # ROAD CLUSTER ONLY ENV TYPE RANDOM VARIANTS
-    parser.add_argument("--roads-clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--per-roads-clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of clusters on each road is random between 1 and roads-clusters-number else is fixed to roads-clusters-number")
     # ROAD ENV TYPE FIXED VARIANTS
-    parser.add_argument("--roads-lane-width-min", type=float, default=3.5,
+    parser.add_argument("--roads-lane-width-min", type=float, default=10.0,
                         help="the minimum width of a single lane in the environment (in meters)")
-    parser.add_argument("--roads-lane-width-max", type=float, default=30.0,
+    parser.add_argument("--roads-lane-width-max", type=float, default=40.0,
                         help="the maximum width of a single lane in the environment (in meters)")
-    parser.add_argument("--roads-number", type=int, default=3,
+    parser.add_argument("--roads-number", type=int, default=1,
                         help="the number of roads in the environment (used if enviroment-type is road or road_cluster)")
+    parser.add_argument("--roads-increased-max-speed", type=float, default=6.0,
+                        help="Maximum speed increment applied to all roads")
     # ROAD CLUSTER ONLY ENV TYPE FIXED VARIANTS
-    parser.add_argument("--roads-clusters-number", type=int, default=2,
+    parser.add_argument("--per-roads-clusters-number", type=int, default=2,
                         help="the number of clusters on each road (used if enviroment-type is road-cluster, fleet movement of default)")
     # RANDOM ENV TYPE (in this case every random variants of this section must be intended random by default and we can have clusters,uniform behavior and roads in the same environment)
     
@@ -196,14 +198,14 @@ def parse_args():
                         help="If reward_mode = twophases, Coverage threshold at which the system transitions from balanced exploration to the coverage phase.")
     parser.add_argument("--max-steps-gu-coverage-phase", type=int, default=50,
                         help="If reward_mode = twophases, Maximum number of steps in the coverage phase before switching back to exploration.")
-    parser.add_argument("--tradeoff-mode", type=str, default="power_law", nargs="?", const="exponential",
+    parser.add_argument("--tradeoff-mode", type=str, default="power_law", nargs="?", const="power_law",
                         help="If reward_mode = mixed, tradeoff mode between exploration and GU coverage (e.g., exponential [e^(kx)-1], exponential_norm [(e^(kx)-1)/(e^k-1)], power_law [x^k]). If not selected is linear [x]")
     parser.add_argument("--k-factor", type=float, default=1.00,
                         help="If reward_mode = mixed, k-factor is used to balance between exploration and GU coverage reward components. A higher value increases the weight of the exponential growth term relative to the base reward. This remains static.")
 
 
     # PPO specific arguments
-    parser.add_argument("--num-envs", type=int, default=16,
+    parser.add_argument("--num-envs", type=int, default=1,
                         help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128,
                         help="the number of steps to run in each environment per policy rollout")
@@ -240,11 +242,6 @@ def parse_args():
                         help="the number of updates before a test")
     parser.add_argument("--num-test-episodes", type=int, default=9,
                         help="the number of episodes to test the agent")
-    parser.add_argument("--round-robin", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help=("If enabled, the test environment will increase the number of UAVs by one in each episode "
-                        "(round-robin style). Once the number of UAVs exceeds `max_uav_number`, it resets back to 1. "
-                        "If disabled, the environment will use a fixed number of UAVs as specified by `--uav-number`."
-                        ))
     parser.add_argument("--test-steps-after-trunc", type=int, default=500,
                         help="the number of steps in a test enviroment before a truncation")
     
