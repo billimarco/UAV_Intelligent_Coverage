@@ -397,7 +397,7 @@ class CruiseUAVWithMap(Cruise):
         if self.roads_number_random:
             number_of_roads = self.np_random.integers(1, self.roads_number + 1)
         else:
-            number_of_roads = self.clusters_number
+            number_of_roads = self.roads_number
         
         if self.roads_gu_uniform_partition: 
             # Numero base di GU per road
@@ -1738,15 +1738,17 @@ class CruiseUAVWithMap(Cruise):
 
         # Disegna i GU (Ground Units) con la loro immagine
         for gu in self.gu:
-            gu_image_path = os.path.join(image_dir, gu.get_image())
-            gu_image = pygame.image.load(gu_image_path)
-            canvas.blit(gu_image, self.image_convert_point(gu.position))
+            if gu.active:
+                gu_image_path = os.path.join(image_dir, gu.get_image())
+                gu_image = pygame.image.load(gu_image_path)
+                canvas.blit(gu_image, self.image_convert_point(gu.position))
 
         # Disegna i UAV (droni)
         drone_image_path = os.path.join(image_dir, "drone30.png")
         drone_image = pygame.image.load(drone_image_path)
         for uav in self.uav:
-            canvas.blit(drone_image, self.image_convert_point(uav.position))
+            if uav.active:
+                canvas.blit(drone_image, self.image_convert_point(uav.position))
 
     def convert_point(self, point: Coordinate) -> Tuple[int, int]:
         pygame_x = (round(point.x_coordinate))

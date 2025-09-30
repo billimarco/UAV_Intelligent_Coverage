@@ -174,8 +174,16 @@ class Grid:
         Returns:
             Point: Punto corrispondente nella griglia (riga, colonna).
         """
-        point_col = math.floor(position.x_coordinate)
-        point_row = math.floor(position.y_coordinate)
+        if position.x_coordinate == 500:
+            point_col = math.floor(position.x_coordinate - 1e-9)
+        else:
+            point_col = math.floor(position.x_coordinate)
+        
+        if position.y_coordinate == 500:
+            point_row = math.floor(position.y_coordinate - 1e-9)
+        else:
+            point_row = math.floor(position.y_coordinate)
+            
         return self.get_point(point_row, point_col)
 
     def get_pixel_from_point(self, point: Point) -> Pixel:

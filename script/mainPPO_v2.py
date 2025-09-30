@@ -408,7 +408,7 @@ if __name__ == "__main__":
                 lrnow = frac * args.learning_rate
                 optimizer.param_groups[0]["lr"] = lrnow
             
-            print("<------------------------->\n")
+            print("<------------------------->")
             print(f"Update {update + 1}/{args.updates}")
             
             # Rollout

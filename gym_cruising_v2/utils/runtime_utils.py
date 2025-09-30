@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-road",
+    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-road-poisson",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -21,7 +21,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=0,
+    parser.add_argument("--cuda-device", type=int, default=1,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -69,11 +69,11 @@ def parse_args():
     
     
     # GU specific arguments
-    parser.add_argument("--max-gu-number", type=int, default=10,
+    parser.add_argument("--max-gu-number", type=int, default=100,
                         help="the max number of GUs in the environment")
     parser.add_argument("--min-gu-number", type=int, default=1,
                         help="the min number of GUs in the environment (only for gu-number-random True)")
-    parser.add_argument("--starting-gu-number", type=int, default=5,
+    parser.add_argument("--starting-gu-number", type=int, default=50,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--gu-max-speed", type=float, default=4.00,
                         help="max speed of ground units in meters per second")
@@ -160,13 +160,13 @@ def parse_args():
     parser.add_argument("--per-roads-clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of clusters on each road is random between 1 and roads-clusters-number else is fixed to roads-clusters-number")
     # ROAD ENV TYPE FIXED VARIANTS
-    parser.add_argument("--roads-lane-width-min", type=float, default=10.0,
+    parser.add_argument("--roads-lane-width-min", type=float, default=50.0,
                         help="the minimum width of a single lane in the environment (in meters)")
-    parser.add_argument("--roads-lane-width-max", type=float, default=40.0,
+    parser.add_argument("--roads-lane-width-max", type=float, default=50.0,
                         help="the maximum width of a single lane in the environment (in meters)")
     parser.add_argument("--roads-number", type=int, default=1,
                         help="the number of roads in the environment (used if enviroment-type is road or road_cluster)")
-    parser.add_argument("--roads-increased-max-speed", type=float, default=6.0,
+    parser.add_argument("--roads-increased-max-speed", type=float, default=21.0,
                         help="Maximum speed increment applied to all roads")
     # ROAD CLUSTER ONLY ENV TYPE FIXED VARIANTS
     parser.add_argument("--per-roads-clusters-number", type=int, default=2,
@@ -205,7 +205,7 @@ def parse_args():
 
 
     # PPO specific arguments
-    parser.add_argument("--num-envs", type=int, default=1,
+    parser.add_argument("--num-envs", type=int, default=16,
                         help="the number of parallel game environments")
     parser.add_argument("--num-steps", type=int, default=128,
                         help="the number of steps to run in each environment per policy rollout")
