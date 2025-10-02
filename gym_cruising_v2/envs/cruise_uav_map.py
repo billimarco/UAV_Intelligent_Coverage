@@ -71,6 +71,7 @@ class CruiseUAVWithMap(Cruise):
         self.roads_lane_width_max = args.roads_lane_width_max
         self.roads_number = args.roads_number
         self.roads_increased_max_speed = args.roads_increased_max_speed
+        self.per_roads_starting_clusters_number = args.per_roads_starting_clusters_number
         self.per_roads_clusters_number = args.per_roads_clusters_number
         
         self.w_boundary_penalty = args.w_boundary_penalty
@@ -400,25 +401,15 @@ class CruiseUAVWithMap(Cruise):
             number_of_roads = self.roads_number
         
         if self.roads_gu_uniform_partition: 
-            # Numero base di GU per road
-            gu_for_road = self.starting_gu_number // number_of_roads
-            remainder = self.starting_gu_number % number_of_roads
+            def split_into_n_parts(value, n):
+                """Divide 'value' in 'n' parti quasi uguali."""
+                base, remainder = divmod(value, n)
+                return [base + (1 if i < remainder else 0) for i in range(n)]
 
-            # Ogni road ha almeno gu_for_road
-            parts = [gu_for_road] * number_of_roads
-
-            # Distribuisci il resto aggiungendo 1 ai primi 'remainder' road
-            for i in range(remainder):
-                parts[i] += 1
-
-            # Ora calcoliamo max_parts
-            extra_gu = self.max_gu_number - self.starting_gu_number
-            extra_per_road = extra_gu // number_of_roads
-            extra_remainder = extra_gu % number_of_roads
-
-            max_parts = [parts[i] + extra_per_road for i in range(number_of_roads)]
-            for i in range(extra_remainder):
-                max_parts[i] += 1
+            # Divisione utenti iniziali
+            parts = split_into_n_parts(self.starting_gu_number, number_of_roads)
+            # Divisione utenti massimi
+            max_parts = split_into_n_parts(self.max_gu_number, number_of_roads)
         else:
             # Partizione casuale
             cut_points = sorted(random.sample(range(1, self.starting_gu_number), number_of_roads - 1))
@@ -426,7 +417,6 @@ class CruiseUAVWithMap(Cruise):
             parts = [cut_points[i+1] - cut_points[i] for i in range(number_of_roads)]
 
             # max_parts
-            extra_gu = self.max_gu_number - self.starting_gu_number
             extra_cut_points = sorted(random.sample(range(1, self.max_gu_number), number_of_roads - 1))
             extra_cut_points = [0] + extra_cut_points + [self.max_gu_number]
             max_parts = [extra_cut_points[i+1] - extra_cut_points[i] for i in range(number_of_roads)]
@@ -751,10 +741,392 @@ class CruiseUAVWithMap(Cruise):
             self.gu[i] = gu # GU non attivo
         
         
-
-    
     def init_gu_road_cluster(self):
-        return
+        area = self.np_random.choice(self.grid.available_area)
+        xmin, xmax = area[0]
+        ymin, ymax = area[1]
+        
+        if self.roads_number_random:
+            number_of_roads = self.np_random.integers(1, self.roads_number + 1)
+        else:
+            number_of_roads = self.roads_number
+        
+        if self.roads_gu_uniform_partition: 
+            def split_into_n_parts(value, n):
+                """Divide 'value' in 'n' parti quasi uguali."""
+                base, remainder = divmod(value, n)
+                return [base + (1 if i < remainder else 0) for i in range(n)]
+
+            # Divisione utenti iniziali
+            parts = split_into_n_parts(self.starting_gu_number, number_of_roads)
+            initial_parts_split = [split_into_n_parts(p, self.per_roads_starting_clusters_number) for p in parts]
+
+            # Divisione utenti massimi
+            max_parts = split_into_n_parts(self.max_gu_number, number_of_roads)
+        else:
+            # Partizione casuale
+            cut_points = sorted(random.sample(range(1, self.starting_gu_number), number_of_roads - 1))
+            cut_points = [0] + cut_points + [self.starting_gu_number]
+            parts = [cut_points[i+1] - cut_points[i] for i in range(number_of_roads)]
+            
+            # Partizione casuale dei cluster interni (per ogni road)
+            initial_parts_split = []
+            for p in parts:
+                if p == 0:
+                    initial_parts_split.append([0] * self.per_roads_starting_clusters_number)
+                    continue
+                if self.per_roads_starting_clusters_number == 1:
+                    initial_parts_split.append([p])
+                    continue
+                
+                cluster_cut_points = sorted(random.sample(range(1, p), self.per_roads_starting_clusters_number - 1))
+                cluster_cut_points = [0] + cluster_cut_points + [p]
+                cluster_parts = [cluster_cut_points[j+1] - cluster_cut_points[j] for j in range(self.per_roads_starting_clusters_number)]
+                initial_parts_split.append(cluster_parts)
+
+            # max_parts
+            extra_cut_points = sorted(random.sample(range(1, self.max_gu_number), number_of_roads - 1))
+            extra_cut_points = [0] + extra_cut_points + [self.max_gu_number]
+            max_parts = [extra_cut_points[i+1] - extra_cut_points[i] for i in range(number_of_roads)]
+        
+        if self.per_roads_clusters_number_random:
+            per_roads_clusters_number = self.np_random.integers(1, self.per_roads_clusters_number + 1)
+        else:
+            per_roads_clusters_number = self.per_roads_clusters_number
+        
+        gu_id = 0  # Contatore globale per l'ID dei GU
+        for i in range(number_of_roads):
+            
+            if self.roads_gu_arrival_distribution == "random":
+                roads_gu_arr_distribution = self.np_random.choice(["uniform", "poisson"])
+            else:
+                roads_gu_arr_distribution = self.roads_gu_arrival_distribution
+        
+            if self.roads_lane_width_random:
+                roads_lane_width = self.np_random.uniform(self.roads_lane_width_min, self.roads_lane_width_max)
+            else:
+                roads_lane_width = self.roads_lane_width_min
+
+            # Genera il bordo dello start
+            start_edge = random.randint(0, 3)
+            if start_edge == 0:  # bottom (inverti cat1 e cat2 rispetto a top per coerenza angolare)
+                x0 = random.uniform(xmin, xmax)
+                y0 = ymin
+                start_center = (x0, y0)
+                cat1 = x0 - xmin
+                cat2 = xmax - x0
+                base_angle = 90
+
+            elif start_edge == 1:  # right (inverti cat1 e cat2 rispetto a top per coerenza angolare)
+                x0 = xmax
+                y0 = random.uniform(ymin, ymax)
+                start_center = (x0, y0)
+                cat1 = y0 - ymin
+                cat2 = ymax - y0
+                base_angle = 180
+
+            elif start_edge == 2:  # top
+                x0 = random.uniform(xmin, xmax)
+                y0 = ymax
+                start_center = (x0, y0)
+                cat1 = xmax - x0
+                cat2 = x0 - xmin
+                base_angle = 270
+
+            else:  # left
+                x0 = xmin
+                y0 = random.uniform(ymin, ymax)
+                start_center = (x0, y0)
+                cat1 = ymax - y0
+                cat2 = y0 - ymin
+                base_angle = 0
+                
+            angle_max = math.atan((cat1 - roads_lane_width) / roads_lane_width) + math.radians(base_angle)
+            angle_min = -math.atan((cat2 - roads_lane_width) / roads_lane_width) + math.radians(base_angle)
+            #angle_max_deg = math.degrees(angle_max)
+            #angle_min_deg = math.degrees(angle_min)
+
+            # Campiona un angolo casuale
+            theta = random.uniform(angle_min, angle_max)
+
+            # Direzione come vettore unitario
+            ux = math.cos(theta)
+            uy = math.sin(theta)
+            ts = []
+
+            # Calcola i t di intersezione con i bordi
+            if ux > 1e-12:
+                ts.append(((xmax - x0) / ux, 'xmax'))
+            if ux < -1e-12:
+                ts.append(((xmin - x0) / ux, 'xmin'))
+            if uy > 1e-12:
+                ts.append(((ymax - y0) / uy, 'ymax'))
+            if uy < -1e-12:
+                ts.append(((ymin - y0) / uy, 'ymin'))
+
+            # Filtra solo i t positivi
+            t_candidates = [(t, side) for (t, side) in ts if t > 1e-9]
+            if not t_candidates:
+                return None  # Nessuna intersezione valida trovata
+
+            # Prendi il t più piccolo => punto di uscita più vicino
+            t, _ = min(t_candidates, key=lambda it: it[0])
+
+            # Calcola end_center con clamping ai limiti
+            end_x = max(min(x0 + t * ux, xmax), xmin)
+            end_y = max(min(y0 + t * uy, ymax), ymin)
+            end_center = (end_x, end_y)
+                        
+            x1, y1 = start_center
+            x2, y2 = end_center
+
+            # vettore perpendicolare normalizzato
+            px, py = -uy, ux
+
+            scale = 10_000  # molto grande rispetto alla dimensione dell'area
+            left_line_start  = (x1 + px * roads_lane_width - ux * scale, y1 + py * roads_lane_width - uy * scale)
+            left_line_end    = (x2 + px * roads_lane_width + ux * scale, y2 + py * roads_lane_width + uy * scale)
+            right_line_start = (x1 - px * roads_lane_width - ux * scale, y1 - py * roads_lane_width - uy * scale)
+            right_line_end   = (x2 - px * roads_lane_width + ux * scale, y2 - py * roads_lane_width + uy * scale)
+
+            edges = [
+                ((xmin, ymin), (xmax, ymin)),  # bordo inferiore
+                ((xmax, ymin), (xmax, ymax)),  # bordo destro
+                ((xmax, ymax), (xmin, ymax)),  # bordo superiore
+                ((xmin, ymax), (xmin, ymin)),  # bordo sinistro
+            ]
+
+            # Funzione per intersezione tra segmenti
+            def segment_intersection(a1, a2, b1, b2):
+                x1, y1 = a1
+                x2, y2 = a2
+                x3, y3 = b1
+                x4, y4 = b2
+
+                denom = (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4)
+                if abs(denom) < 1e-12:
+                    return None  # paralleli o quasi paralleli
+
+                t = ((x1-x3)*(y3-y4) - (y1-y3)*(x3-x4)) / denom
+                u = ((y1-y2)*(x1-x3) - (x1-x2)*(y1-y3)) / denom
+
+                if 0 <= t <= 1 and 0 <= u <=1:
+                    ix = x1 + t * (x2 - x1)
+                    iy = y1 + t * (y2 - y1)
+                    eps = 1e-6 * max(xmax - xmin, ymax - ymin)
+                    # Snap ai bordi della mappa se molto vicini
+                    if abs(ix - xmin) < eps: ix = xmin
+                    elif abs(ix - xmax) < eps: ix = xmax
+                    if abs(iy - ymin) < eps: iy = ymin
+                    elif abs(iy - ymax) < eps: iy = ymax
+
+                    return (ix, iy)
+                return None
+
+            # Trova intersezioni
+            left_intersections = []
+            right_intersections = []
+
+            for edge_start, edge_end in edges:
+                li = segment_intersection(left_line_start, left_line_end, edge_start, edge_end)
+                if li:
+                    left_intersections.append(li)
+                ri = segment_intersection(right_line_start, right_line_end, edge_start, edge_end)
+                if ri:
+                    right_intersections.append(ri)
+
+            # Ordina in base alla distanza dal centro
+            def dist(p): return np.hypot(p[0]-start_center[0], p[1]-start_center[1])
+            left_intersections.sort(key=dist)
+            right_intersections.sort(key=dist)
+
+            if len(left_intersections) < 2 or len(right_intersections) < 2:
+                raise ValueError("La strada non attraversa completamente l'ambiente")
+
+            left_entry, left_exit = left_intersections[0], left_intersections[-1]
+            right_entry, right_exit = right_intersections[0], right_intersections[-1]
+            
+            # Funzione per trovare il bordo correlato ad un punto
+            def find_edge(point):
+                px, py = point
+                for edge_start, edge_end in edges:
+                    x1, y1 = edge_start
+                    x2, y2 = edge_end
+                    # Bordo verticale
+                    if x1 == x2 and abs(px - x1) < 1e-9 and min(y1, y2) <= py <= max(y1, y2):
+                        return (edge_start, edge_end)
+                    # Bordo orizzontale
+                    if y1 == y2 and abs(py - y1) < 1e-9 and min(x1, x2) <= px <= max(x1, x2):
+                        return (edge_start, edge_end)
+                return None
+            
+            # Funzione per generare i punti di ingresso e uscita della strada
+            def generate_path_points_uniform(p_start, p_end, edges, total_points):
+                # Trova gli edge di partenza e arrivo
+                edge_start = find_edge(p_start)
+                edge_end = find_edge(p_end)
+                if edge_start is None or edge_end is None:
+                    raise ValueError("Uno dei punti non è sui bordi")
+
+                # Lista di segmenti attraversati in ordine
+                start_idx = edges.index(edge_start)
+                end_idx = edges.index(edge_end)
+                num_edges = len(edges)
+
+                segments = []
+                idx = start_idx
+                current_point = p_start
+                while True:
+                    next_point = edges[idx][1]
+                    segments.append((current_point, next_point))
+                    if idx == end_idx:
+                        segments[-1] = (current_point, p_end)  # segmento finale verso p_end
+                        break
+                    idx = (idx + 1) % num_edges
+                    current_point = edges[idx][0]
+
+                # Lunghezza totale e passo tra i punti
+                total_length = sum(np.hypot(s[1][0]-s[0][0], s[1][1]-s[0][1]) for s in segments)
+                step = total_length / (total_points - 1)
+
+                # Genera i punti lungo i segmenti
+                path = [segments[0][0]]
+                dist_accum = 0.0
+                seg_idx = 0
+                seg_p1, seg_p2 = segments[seg_idx]
+                while len(path) < total_points - 1:
+                    seg_len = np.hypot(seg_p2[0]-seg_p1[0], seg_p2[1]-seg_p1[1])
+                    if dist_accum + seg_len >= step:
+                        ratio = (step - dist_accum) / seg_len
+                        px = seg_p1[0] + (seg_p2[0] - seg_p1[0]) * ratio
+                        py = seg_p1[1] + (seg_p2[1] - seg_p1[1]) * ratio
+                        path.append((px, py))
+                        dist_accum = 0.0
+                        seg_p1 = (px, py)
+                    else:
+                        dist_accum += seg_len
+                        seg_idx += 1
+                        if seg_idx >= len(segments):
+                            break
+                        seg_p1, seg_p2 = segments[seg_idx]
+
+                path.append(p_end)
+                return path
+
+            # Genera punti ingresso e uscita
+            entry_points = generate_path_points_uniform(left_entry, right_entry, edges, total_points=10)
+            exit_points = generate_path_points_uniform(left_exit, right_exit, edges, total_points=10)
+            
+            # Lunghezza del percorso
+            segment_length = math.sqrt((end_center[0] - start_center[0])**2 + (end_center[1] - start_center[1])**2)
+
+            # Velocità media lungo il segmento
+            mean_speed = (self.roads_increased_max_speed + self.gu_max_speed) / 2
+
+            # Tempo medio per attraversare il segmento
+            mean_travel_time = segment_length / mean_speed
+
+            # Tasso di arrivo (GU per step) per distribuzione Poisson
+            entrance_rate = per_roads_clusters_number / mean_travel_time
+            
+            group = {
+                "type": "road_cluster",
+                "clusters": [],
+                "options": {
+                    "start_center": start_center,
+                    "end_center": end_center,
+                    "per_roads_clusters_number": per_roads_clusters_number,
+                    "arrival_distribution": roads_gu_arr_distribution,
+                    "entrance_rate": entrance_rate,
+                    "max_gu_number": max_parts[i],
+                    "lane_width": roads_lane_width,
+                    "theta": theta,
+                    "entry_points": entry_points,
+                    "exit_points": exit_points
+                }
+            }
+            self.groups.append(group)
+            
+            dx = end_center[0] - start_center[0]
+            dy = end_center[1] - start_center[1]
+            
+            if roads_gu_arr_distribution == "uniform":
+                mean_gu_positions = []
+                for t in np.linspace(0, parts[i]/max_parts[i], self.per_roads_starting_clusters_number, endpoint=False):
+                    # posizione lungo il segmento centrale
+                    x_mean = start_center[0] + t * dx
+                    y_mean = start_center[1] + t * dy
+
+                    
+                    # limitazione ai bordi sull'asse x
+                    x = max(xmin, min(x_mean, xmax))
+                    y = max(ymin, min(y_mean, ymax))
+
+                    mean_gu_positions.append((x, y))
+
+            elif roads_gu_arr_distribution == "poisson":
+                mean_gu_positions = []
+                # generiamo una posizione “virtuale” lungo la frazione iniziale della strada
+                segment_fraction = parts[i] / max_parts[i]
+                # Poisson: genera distanze relative tra i GU
+                lambd = entrance_rate  # tasso calcolato per max_parts[i]
+                distances = np.random.poisson(lam=1/lambd, size=self.per_roads_starting_clusters_number)
+                
+                # Normalizziamo le distanze cumulativamente lungo la frazione iniziale
+                cum_dist = np.cumsum(distances)
+                if cum_dist[-1] == 0:
+                    # Se tutte le distanze sono zero, distribuiamo uniformemente lungo la frazione
+                    cum_dist = np.linspace(0, segment_fraction, len(distances))
+                else:
+                    cum_dist = cum_dist / cum_dist[-1] * segment_fraction
+
+                for t in cum_dist:
+                    # posizione lungo il segmento centrale
+                    x_mean = start_center[0] + t * dx
+                    y_mean = start_center[1] + t * dy
+
+                    x = max(xmin, min(x_mean, xmax))
+                    y = max(ymin, min(y_mean, ymax))
+
+                    mean_gu_positions.append((x, y))
+                
+            for j,pos in enumerate(mean_gu_positions):
+                mean_x, mean_y = pos
+                std_dev = roads_lane_width/3, #le due corsie della strada contengono il 99% dei GU del cluster
+                
+                group_cluster = {
+                    "ids": [],
+                    "out_of_area_positions":[],
+                    "options": {
+                        "mean_x": mean_x,
+                        "mean_y": mean_y,
+                        "std_dev": std_dev,
+                        "mean_inside_at_least_once": True,
+                        "movement_type": "fleet"
+                    }
+                }
+
+                for _ in initial_parts_split[i][j]:
+                    # Generazione del numero casuale
+                    x_coordinate = np.random.normal(mean_x, std_dev)
+                    y_coordinate = np.random.normal(mean_y, std_dev)
+                    position = Coordinate(x_coordinate, y_coordinate, 0)
+                    if area[0][0] <= x_coordinate <= area[0][1] and area[1][0] <= y_coordinate <= area[1][1]:
+                        gu = GU(gu_id, position, True)
+                        self.init_channel(gu)
+                        self.gu[gu_id] = gu
+                        group_cluster["ids"].append(gu_id)
+                        gu_id += 1  # Incrementa l'ID globale
+                    else:
+                        group_cluster["out_of_area_positions"].append(position)
+                
+                group["clusters"].append(group_cluster)
+                
+        # Inizializza i GU non attivi
+        for i in range(gu_id, self.max_gu_number):
+            gu = GU(i, Coordinate(0, 0, 0), False)
+            self.init_channel(gu)
+            self.gu[i] = gu # GU non attivo
 
     def init_channel(self, gu):
         for uav in self.uav:
@@ -1058,6 +1430,7 @@ class CruiseUAVWithMap(Cruise):
             self.move_GU_uniform(group, area)
         
     def move_GU_road(self, group, area):
+        inactive_gu_indices = [i for i, gu in enumerate(self.gu) if not gu.active]
         # Itera su una COPIA della lista per evitare problemi durante la rimozione
         for gu_id in group["ids"][:]:
             gu = self.gu[gu_id]
@@ -1114,11 +1487,9 @@ class CruiseUAVWithMap(Cruise):
 
             for _ in range(new_gu_count):
                 # Trova il primo GU con active == False
-                inactive_gu_indices = [i for i, gu in enumerate(self.gu) if not gu.active]
-                if inactive_gu_indices:
-                    id = inactive_gu_indices[0]  # Prende il primo
-                else:
+                if not inactive_gu_indices:
                     break
+                new_gu_id = inactive_gu_indices.pop(0)
                     
                 if not available_idx_points:  # se finisce la lista, ricomincia e rimescola
                     available_idx_points = list(range(n_points))
@@ -1142,13 +1513,151 @@ class CruiseUAVWithMap(Cruise):
                 y_coordinate = entry_p[1] + dy * t
 
                 position = Coordinate(x_coordinate, y_coordinate, 0)
-                new_gu = GU(id, position, True)
+                new_gu = GU(new_gu_id, position, True)
                 self.init_channel(new_gu)
-                self.gu[id] = new_gu
-                group["ids"].append(id)
+                self.gu[new_gu_id] = new_gu
+                group["ids"].append(new_gu_id)
     
     def move_GU_road_cluster(self, group, area):
-        return
+        # Trova il primo GU con active == False
+        inactive_gu_indices = [i for i, gu in enumerate(self.gu) if not gu.active]
+        new_clusters = []
+        for gu_clusters_on_road in group["clusters"]:
+            # Sample distance from truncnorm [0, max_distance]
+            max_speed = self.gu_max_speed + self.roads_increased_max_speed
+            min_speed = 0
+            mean = (self.gu_max_speed + self.roads_increased_max_speed) / 2
+            sigma = 1
+            a = (min_speed - mean) / sigma
+            b = (max_speed - mean) / sigma
+            distance = truncnorm.rvs(a, b, loc=mean, scale=sigma)
+
+            delta_x = distance * np.cos(group["options"]["theta"])
+            delta_y = distance * np.sin(group["options"]["theta"])
+
+            gu_clusters_on_road["options"]["mean_x"] += delta_x
+            gu_clusters_on_road["options"]["mean_y"] += delta_y
+            
+            if area[0][0] <= gu_clusters_on_road["options"]["mean_x"] <= area[0][1] and area[1][0] <= gu_clusters_on_road["options"]["mean_y"] <= area[1][1]:
+                gu_clusters_on_road["options"]["mean_inside_at_least_once"] = True
+
+            # Spostamento GU attivi
+            for gu_id in gu_clusters_on_road["ids"][:]:
+                gu = self.gu[gu_id]
+                new_position = Coordinate(
+                    gu.position.x_coordinate + delta_x,
+                    gu.position.y_coordinate + delta_y,
+                    0
+                )
+                if new_position.is_in_area(area):
+                    gu.position = new_position
+                    gu.last_shift_x = delta_x
+                    gu.last_shift_y = delta_y
+                else:
+                    gu.reset(Coordinate(0, 0, 0), False)
+                    gu_clusters_on_road["ids"].remove(gu_id)
+                    gu_clusters_on_road["out_of_area_positions"].append(new_position)
+
+            # Gestione out_of_area_positions
+            updated_out_positions = []
+            for out_of_area_pos in gu_clusters_on_road["out_of_area_positions"]:
+                new_position = Coordinate(
+                    out_of_area_pos.x_coordinate + delta_x,
+                    out_of_area_pos.y_coordinate + delta_y,
+                    0
+                )
+                if new_position.is_in_area(area) and inactive_gu_indices:
+                    id = inactive_gu_indices.pop(0)
+                    gu = GU(id, new_position, True)
+                    self.init_channel(gu)
+                    self.gu[id] = gu
+                    gu_clusters_on_road["ids"].append(id)
+                else:
+                    updated_out_positions.append(new_position)
+
+            gu_clusters_on_road["out_of_area_positions"] = updated_out_positions
+
+            # Mantieni solo i cluster non vuoti e quelli che non hanno mai avuto la media dentro l'area
+            if gu_clusters_on_road["ids"] or not gu_clusters_on_road["options"]["mean_inside_at_least_once"]:
+                new_clusters.append(gu_clusters_on_road)
+
+        # Aggiorna la lista di cluster
+        group["clusters"] = new_clusters
+                    
+        # Spawn nuovi GU
+        entrance_rate = group["options"]["entrance_rate"]
+        max_gu_number = group["options"]["max_gu_number"]
+        max_per_roads_clusters_number = group["options"]["per_roads_clusters_number"]
+        current_gu = sum(len(c["ids"]) + len(c["out_of_area_positions"]) for c in group["clusters"])
+        current_clusters = len(group["clusters"])
+
+        # Numero di GU da inserire questo step
+        if group["options"]["arrival_distribution"] == "poisson":
+            new_clusters = np.random.poisson(entrance_rate)
+        elif group["options"]["arrival_distribution"] == "uniform":  # uniform
+            # Numero intero di GU
+            new_clusters = math.floor(entrance_rate)
+            # Probabilità di generare un GU extra se parte frazionaria
+            if np.random.rand() < (entrance_rate - new_clusters):
+                new_clusters += 1
+
+        # Non superare il massimo
+        new_clusters = min(new_clusters, max_per_roads_clusters_number - current_clusters)
+        
+        cut_points = sorted(random.sample(range(1, max_gu_number-current_gu), max_per_roads_clusters_number - current_clusters - 1))
+        cut_points = [0] + cut_points + [max_gu_number - current_gu]
+        parts = [cut_points[i+1] - cut_points[i] for i in range(max_per_roads_clusters_number - current_clusters)]
+        
+        
+        if new_clusters > 0:
+            entry_point = group["options"]["start_center"]
+            exit_point = group["options"]["end_center"]
+            # vettore dal punto di ingresso a quello di uscita
+            dx = exit_point[0] - entry_point[0]
+            dy = exit_point[1] - entry_point[1]
+            
+            segment_length = math.hypot(dx, dy)
+
+            # t massimo per non superare la distanza massima
+            t_max = min(1.0, (self.gu_max_speed+self.roads_increased_max_speed) / segment_length)
+
+            for i in range(new_clusters):
+                
+                # posizione lungo il segmento, limitata da t_max
+                t = np.random.uniform(1e-6, t_max) # fa si che la media sia sempre fuori dall'area all'inizio
+                mean_x = entry_point[0] - dx * t
+                mean_y = entry_point[1] - dy * t
+                std_dev = group["options"]["lane_width"]/3 #le due corsie della strada contengono il 99% dei GU del cluster
+                    
+                group_cluster = {
+                    "ids": [],
+                    "out_of_area_positions":[],
+                    "options": {
+                        "mean_x": mean_x,
+                        "mean_y": mean_y,
+                        "std_dev": std_dev,
+                        "mean_inside_at_least_once": False,
+                        "movement_type": "fleet"
+                    }
+                }
+
+                for _ in range(parts[i]):
+                    if not inactive_gu_indices:
+                        break
+                    new_gu_id = inactive_gu_indices.pop(0)
+                    # Generazione del numero casuale
+                    x_coordinate = np.random.normal(mean_x, std_dev)
+                    y_coordinate = np.random.normal(mean_y, std_dev)
+                    position = Coordinate(x_coordinate, y_coordinate, 0)
+                    if area[0][0] <= x_coordinate <= area[0][1] and area[1][0] <= y_coordinate <= area[1][1]:
+                        new_gu = GU(new_gu_id, position, True)
+                        self.init_channel(new_gu)
+                        self.gu[new_gu_id] = new_gu
+                        group_cluster["ids"].append(new_gu_id)
+                    else:
+                        group_cluster["out_of_area_positions"].append(position)
+                
+                group["clusters"].append(group_cluster)
 
     # DO CALCULATIONS AND REWARDS 
         

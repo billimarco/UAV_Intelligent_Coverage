@@ -118,7 +118,7 @@ def parse_args():
     
     
     # Environment specific arguments
-    parser.add_argument("--environment-type", type=str, default="road", nargs="?", const="random",
+    parser.add_argument("--environment-type", type=str, default="road_cluster", nargs="?", const="random",
                         help="Type of environment (e.g., uniform, cluster, road, road_cluster, random")
     parser.add_argument("--environment-random-spawn-despawn-gu" , type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, GUs can randomly spawn and despawn during the simulation")
@@ -169,8 +169,10 @@ def parse_args():
     parser.add_argument("--roads-increased-max-speed", type=float, default=21.0,
                         help="Maximum speed increment applied to all roads")
     # ROAD CLUSTER ONLY ENV TYPE FIXED VARIANTS
+    parser.add_argument("--per-roads-starting-clusters-number", type=int, default=1,
+                        help="the starting number of clusters on each road (used if enviroment-type is road-cluster, fleet movement of default)")
     parser.add_argument("--per-roads-clusters-number", type=int, default=2,
-                        help="the number of clusters on each road (used if enviroment-type is road-cluster, fleet movement of default)")
+                        help="the max number of clusters on each road (used if enviroment-type is road-cluster, fleet movement of default)")
     # RANDOM ENV TYPE (in this case every random variants of this section must be intended random by default and we can have clusters,uniform behavior and roads in the same environment)
     
     
