@@ -1026,7 +1026,7 @@ class CruiseUAVWithMap(Cruise):
             # Tempo medio per attraversare il segmento
             mean_travel_time = segment_length / mean_speed
 
-            # Tasso di arrivo (GU per step) per distribuzione Poisson
+            # Tasso di arrivo (per_roads_clusters per step) per distribuzione Poisson
             entrance_rate = per_roads_clusters_number / mean_travel_time
             
             group = {
@@ -1052,7 +1052,7 @@ class CruiseUAVWithMap(Cruise):
             
             if roads_gu_arr_distribution == "uniform":
                 mean_gu_positions = []
-                for t in np.linspace(0, parts[i]/max_parts[i], self.per_roads_starting_clusters_number, endpoint=False):
+                for t in np.linspace(0, self.per_roads_starting_clusters_number/per_roads_clusters_number, self.per_roads_starting_clusters_number, endpoint=False):
                     # posizione lungo il segmento centrale
                     x_mean = start_center[0] + t * dx
                     y_mean = start_center[1] + t * dy
@@ -1067,7 +1067,7 @@ class CruiseUAVWithMap(Cruise):
             elif roads_gu_arr_distribution == "poisson":
                 mean_gu_positions = []
                 # generiamo una posizione “virtuale” lungo la frazione iniziale della strada
-                segment_fraction = parts[i] / max_parts[i]
+                segment_fraction = self.per_roads_starting_clusters_number/per_roads_clusters_number
                 # Poisson: genera distanze relative tra i GU
                 lambd = entrance_rate  # tasso calcolato per max_parts[i]
                 distances = np.random.poisson(lam=1/lambd, size=self.per_roads_starting_clusters_number)
@@ -1092,7 +1092,7 @@ class CruiseUAVWithMap(Cruise):
                 
             for j,pos in enumerate(mean_gu_positions):
                 mean_x, mean_y = pos
-                std_dev = roads_lane_width/3, #le due corsie della strada contengono il 99% dei GU del cluster
+                std_dev = roads_lane_width/3 #le due corsie della strada contengono il 99% dei GU del cluster
                 
                 group_cluster = {
                     "ids": [],
@@ -1106,7 +1106,7 @@ class CruiseUAVWithMap(Cruise):
                     }
                 }
 
-                for _ in initial_parts_split[i][j]:
+                for _ in range(initial_parts_split[i][j]):
                     # Generazione del numero casuale
                     x_coordinate = np.random.normal(mean_x, std_dev)
                     y_coordinate = np.random.normal(mean_y, std_dev)
@@ -1603,10 +1603,27 @@ class CruiseUAVWithMap(Cruise):
 
         # Non superare il massimo
         new_clusters = min(new_clusters, max_per_roads_clusters_number - current_clusters)
-        
-        cut_points = sorted(random.sample(range(1, max_gu_number-current_gu), max_per_roads_clusters_number - current_clusters - 1))
-        cut_points = [0] + cut_points + [max_gu_number - current_gu]
-        parts = [cut_points[i+1] - cut_points[i] for i in range(max_per_roads_clusters_number - current_clusters)]
+        remained_gu = max_gu_number - current_gu
+        parts = []
+
+        if new_clusters > 0 and remained_gu >= new_clusters:  # serve almeno 1 GU per cluster
+            # quanti cluster rimangono dopo questi
+            other_clusters = max_per_roads_clusters_number - current_clusters - new_clusters
+            
+            # massimo che posso assegnare senza togliere tutto agli altri
+            max_assignable = remained_gu - other_clusters
+            max_assignable = max(new_clusters, max_assignable)  # non meno di new_clusters
+            
+            # scegli quanti GU assegnare davvero
+            used_total = random.randint(new_clusters, max_assignable)
+
+            if new_clusters == 1:
+                parts = [used_total]
+            else:
+                extra = used_total - new_clusters
+                cut_points = sorted(random.sample(range(1, extra + 1), new_clusters - 1)) if extra > 0 else []
+                cut_points = [0] + cut_points + [extra]
+                parts = [c2 - c1 + 1 for c1, c2 in zip(cut_points[:-1], cut_points[1:])]
         
         
         if new_clusters > 0:
@@ -1619,7 +1636,7 @@ class CruiseUAVWithMap(Cruise):
             segment_length = math.hypot(dx, dy)
 
             # t massimo per non superare la distanza massima
-            t_max = min(1.0, (self.gu_max_speed+self.roads_increased_max_speed) / segment_length)
+            t_max = min(1.0,  group["options"]["lane_width"] / segment_length)
 
             for i in range(new_clusters):
                 
