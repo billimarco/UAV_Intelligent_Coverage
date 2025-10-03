@@ -1581,6 +1581,8 @@ class CruiseUAVWithMap(Cruise):
             if gu_clusters_on_road["ids"] or not gu_clusters_on_road["options"]["mean_inside_at_least_once"]:
                 new_clusters.append(gu_clusters_on_road)
 
+        # Riaggiorna la lista degli inattivi
+        inactive_gu_indices = [i for i, gu in enumerate(self.gu) if not gu.active]
         # Aggiorna la lista di cluster
         group["clusters"] = new_clusters
                     
@@ -1600,6 +1602,9 @@ class CruiseUAVWithMap(Cruise):
             # Probabilità di generare un GU extra se parte frazionaria
             if np.random.rand() < (entrance_rate - new_clusters):
                 new_clusters += 1
+                
+        if current_clusters == 0:
+            new_clusters = max(new_clusters, 1)
 
         # Non superare il massimo
         new_clusters = min(new_clusters, max_per_roads_clusters_number - current_clusters)
