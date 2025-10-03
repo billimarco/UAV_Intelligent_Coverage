@@ -2002,7 +2002,7 @@ class CruiseUAVWithMap(Cruise):
         # 3. Incentivo all'esplorazione (bassa densità di esplorazione)
         self.exploration_incentive_total = 0.0
         # Calcola il numero totale di celle
-        if self.w_exploration > 0.0 and self.exploration_phase:
+        if self.w_exploration > 0.0:
             map_exploration = self.normalizeExplorationMap(self.grid.get_point_exploration_map())
             total_area_points = self.grid.grid_width * self.grid.grid_height
 
@@ -2015,8 +2015,8 @@ class CruiseUAVWithMap(Cruise):
             balanced_exploration_incentive = 1 - np.mean(map_exploration)
             
             # Controllo per vedere se si è passati alla fase di copertura
-            if self.reward_mode == "twophases":
-                exploration_incentive = (explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive) / 2 
+            if self.reward_mode == "twophases" and self.exploration_phase:
+                exploration_incentive = (explored_area_points_incentive + new_explored_area_points_incentive + balanced_exploration_incentive) / 2
                 if explored_area_points_incentive >= self.exhaustive_exploration_threshold and balanced_exploration_incentive >= self.balanced_exploration_threshold:
                     self.exploration_phase = False
                     self.steps_gu_coverage_phase = self.max_steps_gu_coverage_phase
@@ -2040,7 +2040,7 @@ class CruiseUAVWithMap(Cruise):
         # 4. Incentivo per partizione di voronoi omogenea.
         self.homogenous_voronoi_partition_incentive_total = 0.0
         # Calcola il numero ideale di punti per UAV in una partizione equa
-        if self.w_homogenous_voronoi_partition > 0.0 and self.exploration_phase:
+        if self.w_homogenous_voronoi_partition > 0.0:
             counts = np.bincount(self.voronoi_partition.flatten(), minlength=self.uav_number)
             ideal_area_points = total_area_points / self.uav_number
             
@@ -2055,11 +2055,11 @@ class CruiseUAVWithMap(Cruise):
             homogenous_voronoi_partition_incentive = np.clip(homogenous_voronoi_partition_incentive, -1, 0)
 
             self.homogenous_voronoi_partition_incentive_total = self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive * self.uav_number
-            
-            for i in range(len(self.uav)):
-                if not self.uav[i].active:
-                    continue
-                individual_rewards[i] += self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive
+            if (self.reward_mode == "twophases" and self.exploration_phase) or self.reward_mode == "mixed":
+                for i in range(len(self.uav)):
+                    if not self.uav[i].active:
+                        continue
+                    individual_rewards[i] += self.w_homogenous_voronoi_partition * homogenous_voronoi_partition_incentive
         
         # 5. Copertura dei GU massima
         self.gu_coverage_total = 0
@@ -2075,8 +2075,8 @@ class CruiseUAVWithMap(Cruise):
         else:
             proportions = [1.0 / num_uav] * num_uav
         '''    
-        if self.reward_mode == "twophases":    
-            if self.steps_gu_coverage_phase > 0 and not self.exploration_phase:
+        if self.reward_mode == "twophases" and not self.exploration_phase:    
+            if self.steps_gu_coverage_phase > 0:
                 coverage_score = self.w_exploration + (self.gu_covered / np.sum(self.assumed_active_gu_mask)) if np.sum(self.assumed_active_gu_mask) > 0 else 0.0
                 self.steps_gu_coverage_phase -= 1
                 if self.steps_gu_coverage_phase == 0:
