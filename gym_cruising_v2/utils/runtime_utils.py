@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-road-uniform",
+    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-road-cluster-poisson",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -34,11 +34,11 @@ def parse_args():
     
     
     # Algorithm specific arguments
-    parser.add_argument("--render-mode", type=str, default="human", 
+    parser.add_argument("--render-mode", type=str, default=None, 
                         help="Render mode (e.g., human or None")
-    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the training will be performed")
-    parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="If set, loads and runs a pre-trained model")
     parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="numerical test using trained model")
@@ -160,18 +160,18 @@ def parse_args():
     parser.add_argument("--per-roads-clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of clusters on each road is random between 1 and roads-clusters-number else is fixed to roads-clusters-number")
     # ROAD ENV TYPE FIXED VARIANTS
-    parser.add_argument("--roads-lane-width-min", type=float, default=5.0,
+    parser.add_argument("--roads-lane-width-min", type=float, default=50.0,
                         help="the minimum width of a single lane in the environment (in meters)")
-    parser.add_argument("--roads-lane-width-max", type=float, default=5.0,
+    parser.add_argument("--roads-lane-width-max", type=float, default=50.0,
                         help="the maximum width of a single lane in the environment (in meters)")
     parser.add_argument("--roads-number", type=int, default=1,
                         help="the number of roads in the environment (used if enviroment-type is road or road_cluster)")
     parser.add_argument("--roads-increased-max-speed", type=float, default=21.0,
                         help="Maximum speed increment applied to all roads")
     # ROAD CLUSTER ONLY ENV TYPE FIXED VARIANTS
-    parser.add_argument("--per-roads-starting-clusters-number", type=int, default=3,
+    parser.add_argument("--per-roads-starting-clusters-number", type=int, default=1,
                         help="the starting number of clusters on each road (used if enviroment-type is road-cluster, fleet movement of default)")
-    parser.add_argument("--per-roads-clusters-number", type=int, default=5,
+    parser.add_argument("--per-roads-clusters-number", type=int, default=2,
                         help="the max number of clusters on each road (used if enviroment-type is road-cluster, fleet movement of default)")
     # RANDOM ENV TYPE (in this case every random variants of this section must be intended random by default and we can have clusters,uniform behavior and roads in the same environment)
     

@@ -1604,6 +1604,7 @@ class CruiseUAVWithMap(Cruise):
         # Non superare il massimo
         new_clusters = min(new_clusters, max_per_roads_clusters_number - current_clusters)
         remained_gu = max_gu_number - current_gu
+        new_clusters = min(new_clusters, remained_gu)
         parts = []
 
         if new_clusters > 0 and remained_gu >= new_clusters:  # serve almeno 1 GU per cluster
