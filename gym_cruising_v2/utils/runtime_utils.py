@@ -21,7 +21,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=0,
+    parser.add_argument("--cuda-device", type=int, default=1,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
