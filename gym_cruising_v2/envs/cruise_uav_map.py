@@ -47,6 +47,8 @@ class CruiseUAVWithMap(Cruise):
         self.spawn_gu_prob = args.spawn_gu_prob
         self.covered_threshold = args.covered_threshold # dB
         
+        self.nlos_toggle = args.nlos_toggle
+        
         self.environment_type = args.environment_type
         self.environment_random_spawn_despawn_gu = args.environment_random_spawn_despawn_gu
         self.environment_gu_bounce = args.environment_gu_bounce
@@ -1136,14 +1138,11 @@ class CruiseUAVWithMap(Cruise):
             distance = gu.position.calculate_distance_to_coordinate(uav.position)
             initial_channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
             sample = random.random()
-            #RAND
-            '''
-            if sample <= initial_channel_PLoS:
+            
+            if sample <= initial_channel_PLoS or not self.nlos_toggle:
                 gu.channels_state.append(0)  # 0 = LoS
             else:
                 gu.channels_state.append(1)  # 1 = NLoS
-            '''
-            gu.channels_state.append(0)
             
 
 
@@ -1684,36 +1683,55 @@ class CruiseUAVWithMap(Cruise):
 
     # DO CALCULATIONS AND REWARDS 
         
-    def calculate_PathLoss_with_Markov_Chain(self):
+    def calculate_PathLoss_with_Markov_Chain(self):     
         for index_gu, gu in enumerate(self.gu):
-            #RAND
-            '''
+
+            # Caso senza NLoS (Markov disattivo)
+            if not self.nlos_toggle:
+                for index_uav, uav in enumerate(self.uav):
+                    if gu.active and uav.active:
+                        distance = gu.position.calculate_distance_to_coordinate(uav.position)
+                        state = gu.channels_state[index_uav]
+                        self.path_loss[index_gu][index_uav] = self.communication_channel.get_PathLoss(distance, state)
+                    else:
+                        self.path_loss[index_gu][index_uav] = np.inf
+                continue
+
+            # Caso con NLoS (Markov attivo)
             new_channels_state = []
-            gu_shift = gu.position.calculate_distance(gu.previous_position)
-            '''
+            gu_previous_position = Coordinate(
+                gu.position.x_coordinate - gu.last_shift_x,
+                gu.position.y_coordinate - gu.last_shift_y,
+                gu.position.z_coordinate
+            )
+            gu_shift = gu.position.calculate_distance_to_coordinate(gu_previous_position)
+
             for index_uav, uav in enumerate(self.uav):
-                
-                if not gu.active or not uav.active:
+                if not (gu.active and uav.active):
                     self.path_loss[index_gu][index_uav] = np.inf
                     continue
-                
+
                 distance = gu.position.calculate_distance_to_coordinate(uav.position)
-                #RAND
-                '''
                 channel_PLoS = self.communication_channel.get_PLoS(distance, self.uav_altitude)
-                relative_shift = uav.position.calculate_distance(uav.previous_position) + gu_shift
+
+                uav_previous_position = Coordinate(
+                    uav.position.x_coordinate - uav.last_shift_x,
+                    uav.position.y_coordinate - uav.last_shift_y,
+                    uav.position.z_coordinate
+                )
+                uav_shift = uav.position.calculate_distance_to_coordinate(uav_previous_position)
+                relative_shift = uav_shift + gu_shift
+
                 transition_matrix = self.communication_channel.get_transition_matrix(relative_shift, channel_PLoS)
-                current_state = np.random.choice(range(len(transition_matrix)),
-                                                 p=transition_matrix[gu.channels_state[index]])
+                current_state = np.random.choice(
+                    len(transition_matrix),
+                    p=transition_matrix[gu.channels_state[index_uav]]
+                )
                 new_channels_state.append(current_state)
-                path_loss = self.communication_channel.get_PathLoss(distance, current_state)
-                '''
-                path_loss = self.communication_channel.get_PathLoss(distance, gu.channels_state[index_uav])
-                self.path_loss[index_gu][index_uav] = path_loss
-            #RAND
-            '''
+
+                self.path_loss[index_gu][index_uav] = self.communication_channel.get_PathLoss(distance, current_state)
+
             gu.set_channels_state(new_channels_state)
-            '''
              
     def calculate_SINR(self):
         for index_gu, gu in enumerate(self.gu):

@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="mixed---3UAV-complete-powerlinear-road-cluster-poisson",
+    parser.add_argument("--exp-name", type=str, default="mixed180-3UAV-powerlinear-uniform-Randomgu",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -21,7 +21,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=1,
+    parser.add_argument("--cuda-device", type=int, default=0,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -71,9 +71,9 @@ def parse_args():
     # GU specific arguments
     parser.add_argument("--max-gu-number", type=int, default=100,
                         help="the max number of GUs in the environment")
-    parser.add_argument("--min-gu-number", type=int, default=1,
+    parser.add_argument("--min-gu-number", type=int, default=20,
                         help="the min number of GUs in the environment (only for gu-number-random True)")
-    parser.add_argument("--starting-gu-number", type=int, default=50,
+    parser.add_argument("--starting-gu-number", type=int, default=100,
                         help="the number of starting ground units in the environment")
     parser.add_argument("--gu-max-speed", type=float, default=4.00,
                         help="max speed of ground units in meters per second")
@@ -94,11 +94,13 @@ def parse_args():
                         help="the spawn offset for UAV of the environment in point")
     parser.add_argument("--gu-spawn-offset" , type=int, default=10,
                         help="the spawn offset for GU of the environment in point")
-    parser.add_argument("--unexplored-point-max-steps", type=int, default=50,
+    parser.add_argument("--unexplored-point-max-steps", type=int, default=180,
                         help="maximum steps at which we define a point completely unexplored. Increments of maximum steps stops")
     
     
     # Channels specific arguments
+    parser.add_argument("--nlos-toggle", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+                        help="if toggled, NLoS propagation conditions are considered")
     parser.add_argument("--a", type=float, default=12.08,
                         help="Parameter 'a' for path loss model (12.08 in dense urban)")
     parser.add_argument("--b", type=float, default=0.11,
@@ -118,9 +120,9 @@ def parse_args():
     
     
     # Environment specific arguments
-    parser.add_argument("--environment-type", type=str, default="road_cluster", nargs="?", const="random",
+    parser.add_argument("--environment-type", type=str, default="uniform", nargs="?", const="random",
                         help="Type of environment (e.g., uniform, cluster, road, road_cluster, random")
-    parser.add_argument("--environment-random-spawn-despawn-gu" , type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--environment-random-spawn-despawn-gu" , type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, GUs can randomly spawn and despawn during the simulation")
     parser.add_argument("--environment-gu-bounce", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, GUs bounce when they reach the environment boundaries else they despawn (This is not intended for roads)")
@@ -129,14 +131,14 @@ def parse_args():
                         help="if toggled, the environment type is randomly chosen between uniform, cluster, road, road_cluster, random else is fixed to environment-type")
     parser.add_argument("--uav-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of UAVs is random between 1 and max-uav-number else is fixed to uav-number")
-    parser.add_argument("--gu-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--gu-number-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the number of GUs is random between min-gu-number and max-gu-number else is fixed to starting-gu-number")
     # CLUSTER ENV TYPE RANDOM VARIANTS
-    parser.add_argument("--clusters-movement", type=str, default="random", nargs="?", const="random",
+    parser.add_argument("--clusters-movement", type=str, default="fleet", nargs="?", const="random",
                         help="How clusters of GU moves (e.g., fleet (same direction), stationary (all GUs stopped), independent (each GU random direction), random (each cluster have different movement type))")
     parser.add_argument("--clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of clusters is random between 1 and clusters-number else is fixed to clusters-number")
-    parser.add_argument("--clusters-variance-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--clusters-variance-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the variance of clusters is random between clusters-variance-min and clusters-variance-max else is fixed to clusters-variance-min")
     parser.add_argument("--clusters-gu-uniform-partition", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, Every cluster has the same number of GUs else the GUs are randomly partitioned")
@@ -145,7 +147,7 @@ def parse_args():
                         help="if clusters_number_random is False, this is the number of clusters in the environment")
     parser.add_argument("--clusters-variance-min", type=int, default=500,
                         help="the minimum variance of the clusters")
-    parser.add_argument("--clusters-variance-max", type=int, default=1500,
+    parser.add_argument("--clusters-variance-max", type=int, default=1000,
                         help="the maximum variance of the clusters")
     # ROAD ENV TYPE RANDOM VARIANTS
     parser.add_argument("--roads-gu-arrival-distribution", type=str, default="poisson", nargs="?", const="random",
