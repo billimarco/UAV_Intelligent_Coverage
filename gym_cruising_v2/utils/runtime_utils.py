@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="mixed180-3UAV-powerlinear-uniform-Randomgu",
+    parser.add_argument("--exp-name", type=str, default="mixed180-3UAV-power3-1road-2cluster-poisson-100Fixgu",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -21,7 +21,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=0,
+    parser.add_argument("--cuda-device", type=int, default=1,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -99,8 +99,6 @@ def parse_args():
     
     
     # Channels specific arguments
-    parser.add_argument("--nlos-toggle", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="if toggled, NLoS propagation conditions are considered")
     parser.add_argument("--a", type=float, default=12.08,
                         help="Parameter 'a' for path loss model (12.08 in dense urban)")
     parser.add_argument("--b", type=float, default=0.11,
@@ -120,9 +118,11 @@ def parse_args():
     
     
     # Environment specific arguments
-    parser.add_argument("--environment-type", type=str, default="uniform", nargs="?", const="random",
+    parser.add_argument("--environment-type", type=str, default="road_cluster", nargs="?", const="random",
                         help="Type of environment (e.g., uniform, cluster, road, road_cluster, random")
-    parser.add_argument("--environment-random-spawn-despawn-gu" , type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--nlos-toggle", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+                        help="if toggled, NLoS propagation conditions are considered")
+    parser.add_argument("--environment-random-spawn-despawn-gu" , type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, GUs can randomly spawn and despawn during the simulation")
     parser.add_argument("--environment-gu-bounce", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, GUs bounce when they reach the environment boundaries else they despawn (This is not intended for roads)")
@@ -131,7 +131,7 @@ def parse_args():
                         help="if toggled, the environment type is randomly chosen between uniform, cluster, road, road_cluster, random else is fixed to environment-type")
     parser.add_argument("--uav-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of UAVs is random between 1 and max-uav-number else is fixed to uav-number")
-    parser.add_argument("--gu-number-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--gu-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of GUs is random between min-gu-number and max-gu-number else is fixed to starting-gu-number")
     # CLUSTER ENV TYPE RANDOM VARIANTS
     parser.add_argument("--clusters-movement", type=str, default="fleet", nargs="?", const="random",
@@ -154,7 +154,7 @@ def parse_args():
                         help="Distribution for the arrival of GUs on the roads (e.g., uniform, poisson, random (choose between one of distributions))")
     parser.add_argument("--roads-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of roads is random between 1 and roads-number else is fixed to roads-number")
-    parser.add_argument("--roads-lane-width-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--roads-lane-width-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the width of a single lane is random between roads-lane-width-min and roads-lane-width-max else is fixed to roads-lane-width-min")
     parser.add_argument("--roads-gu-uniform-partition", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, Every road has the same number of max theorical GUs else the max theorical GUs are randomly partitioned")
@@ -162,7 +162,7 @@ def parse_args():
     parser.add_argument("--per-roads-clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of clusters on each road is random between 1 and roads-clusters-number else is fixed to roads-clusters-number")
     # ROAD ENV TYPE FIXED VARIANTS
-    parser.add_argument("--roads-lane-width-min", type=float, default=50.0,
+    parser.add_argument("--roads-lane-width-min", type=float, default=30.0,
                         help="the minimum width of a single lane in the environment (in meters)")
     parser.add_argument("--roads-lane-width-max", type=float, default=50.0,
                         help="the maximum width of a single lane in the environment (in meters)")
@@ -204,7 +204,7 @@ def parse_args():
                         help="If reward_mode = twophases, Maximum number of steps in the coverage phase before switching back to exploration.")
     parser.add_argument("--tradeoff-mode", type=str, default="power_law", nargs="?", const="power_law",
                         help="If reward_mode = mixed, tradeoff mode between exploration and GU coverage (e.g., exponential [e^(kx)-1], exponential_norm [(e^(kx)-1)/(e^k-1)], power_law [x^k]). If not selected is linear [x]")
-    parser.add_argument("--k-factor", type=float, default=1.00,
+    parser.add_argument("--k-factor", type=float, default=3.00,
                         help="If reward_mode = mixed, k-factor is used to balance between exploration and GU coverage reward components. A higher value increases the weight of the exponential growth term relative to the base reward. This remains static.")
 
 
