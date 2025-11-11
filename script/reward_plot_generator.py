@@ -23,6 +23,8 @@ PROJECT = args.wandb_project_name
 GROUP = None
 
 # 👇 Run da includere
+'''
+#UNIFORM
 SELECTED_RUNS = [
     "mixed180-3UAV-powerlinear-uniform-100Fixgu",
     "mixed180-3UAV-powerlinear-uniform-Randomgu",
@@ -32,6 +34,47 @@ SELECTED_RUNS = [
 RUN_NAME_MAP = {
     "mixed180-3UAV-powerlinear-uniform-100Fixgu": "Uniform-NoRAU-powerlinear",
     "mixed180-3UAV-powerlinear-uniform-Randomgu": "Uniform-RAU-powerlinear",
+}
+'''
+
+'''
+#CLUSTERED
+SELECTED_RUNS = [
+    "mixed180-3UAV-powerlinear-1cluster-fleet-100Fixgu",
+    "mixed180-3UAV-power3-1cluster-fleet-100Fixgu",
+    "mixed180-3UAV-power3-1cluster-RandomMov-100Fixgu",
+    "mixed180-3UAV-power3-[1,2]cluster-fleet-100Fixgu",
+    "mixed180-3UAV-power3-[1,2]cluster-RandomMov-100Fixgu",
+    "mixed180-3UAV-power3-2cluster-fleet-100Fixgu",
+    "mixed180-3UAV-power3-2cluster-RandomMov-100Fixgu"
+]
+
+# 👇 Mappa per rinominare le run nella legenda
+RUN_NAME_MAP = {
+    "mixed180-3UAV-powerlinear-1cluster-fleet-100Fixgu": "1Cluster-Fleet-powerlinear",
+    "mixed180-3UAV-power3-1cluster-fleet-100Fixgu": "1Cluster-Fleet-power3",
+    "mixed180-3UAV-power3-1cluster-RandomMov-100Fixgu": "1Cluster-Random-power3",
+    "mixed180-3UAV-power3-[1,2]cluster-fleet-100Fixgu": "1-2Cluster-Fleet-power3",
+    "mixed180-3UAV-power3-[1,2]cluster-RandomMov-100Fixgu": "1-2Cluster-Random-power3",
+    "mixed180-3UAV-power3-2cluster-fleet-100Fixgu": "2Cluster-Fleet-power3",
+    "mixed180-3UAV-power3-2cluster-RandomMov-100Fixgu": "2Cluster-Random-power3",
+}
+'''
+
+#ROAD
+SELECTED_RUNS = [
+    "mixed180-3UAV-powerlinear-1road-poisson-100Fixgu",
+    "mixed180-3UAV-power3-1road-poisson-100Fixgu",
+    "mixed180-3UAV-powerlinear-1road-poisson-Randomgu",
+    "mixed180-3UAV-power3-1road-poisson-Randomgu"
+]
+
+# 👇 Mappa per rinominare le run nella legenda
+RUN_NAME_MAP = {
+    "mixed180-3UAV-powerlinear-1road-poisson-100Fixgu" : "1Road-NoRAU-powerlinear",
+    "mixed180-3UAV-power3-1road-poisson-100Fixgu" : "1Road-NoRAU-power3",
+    "mixed180-3UAV-powerlinear-1road-poisson-Randomgu" : "1Road-RAU-powerlinear",
+    "mixed180-3UAV-power3-1road-poisson-Randomgu" : "1Road-RAU-power3"
 }
 
 # 👇 Metriche da plottare

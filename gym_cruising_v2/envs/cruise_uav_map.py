@@ -193,7 +193,7 @@ class CruiseUAVWithMap(Cruise):
             self.options = self.args.options
         
         if self.environment_type_random:
-            self.environment_type = self.np_random.choice(["uniform", "cluster", "road", "road_cluster", "random"])
+            self.environment_type = self.np_random.choice(["uniform", "cluster", "road", "road_cluster"]) # random_grouping is disabled
         if self.uav_number_random:
             self.uav_number = self.np_random.integers(1, self.max_uav_number + 1)
         if self.gu_number_random:

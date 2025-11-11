@@ -5,7 +5,7 @@ from distutils.util import strtobool
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", type=str, default="mixed180-3UAV-power3-1road-2cluster-poisson-100Fixgu",
+    parser.add_argument("--exp-name", type=str, default="mixed180-3UAV-power3-randomEnv-100Fixgu",
                         help="the name of this experiment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
                         help="the learning rate of the optimizer")# 1.0e-3 lr, 2.5e-4 default, 1.0e-4 lrl, 2.5e-5 lrl--
@@ -118,8 +118,8 @@ def parse_args():
     
     
     # Environment specific arguments
-    parser.add_argument("--environment-type", type=str, default="road_cluster", nargs="?", const="random",
-                        help="Type of environment (e.g., uniform, cluster, road, road_cluster, random")
+    parser.add_argument("--environment-type", type=str, default="uniform", nargs="?", const="random_grouping",
+                        help="Type of environment (e.g., uniform, cluster, road, road_cluster, random_grouping)")
     parser.add_argument("--nlos-toggle", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, NLoS propagation conditions are considered")
     parser.add_argument("--environment-random-spawn-despawn-gu" , type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
@@ -127,23 +127,23 @@ def parse_args():
     parser.add_argument("--environment-gu-bounce", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, GUs bounce when they reach the environment boundaries else they despawn (This is not intended for roads)")
     # ALL ENV TYPES RESET RANDOM VARIANTS
-    parser.add_argument("--environment-type-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="if toggled, the environment type is randomly chosen between uniform, cluster, road, road_cluster, random else is fixed to environment-type")
+    parser.add_argument("--environment-type-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="if toggled, the environment type is randomly chosen between uniform, cluster, road, road_cluster, random_grouping else is fixed to environment-type")
     parser.add_argument("--uav-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of UAVs is random between 1 and max-uav-number else is fixed to uav-number")
     parser.add_argument("--gu-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of GUs is random between min-gu-number and max-gu-number else is fixed to starting-gu-number")
     # CLUSTER ENV TYPE RANDOM VARIANTS
-    parser.add_argument("--clusters-movement", type=str, default="fleet", nargs="?", const="random",
+    parser.add_argument("--clusters-movement", type=str, default="random", nargs="?", const="random",
                         help="How clusters of GU moves (e.g., fleet (same direction), stationary (all GUs stopped), independent (each GU random direction), random (each cluster have different movement type))")
-    parser.add_argument("--clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--clusters-number-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the number of clusters is random between 1 and clusters-number else is fixed to clusters-number")
     parser.add_argument("--clusters-variance-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, the variance of clusters is random between clusters-variance-min and clusters-variance-max else is fixed to clusters-variance-min")
     parser.add_argument("--clusters-gu-uniform-partition", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, Every cluster has the same number of GUs else the GUs are randomly partitioned")
     # CLUSTER ENV TYPE FIXED VARIANTS
-    parser.add_argument("--clusters-number", type=int, default=1,
+    parser.add_argument("--clusters-number", type=int, default=2,
                         help="if clusters_number_random is False, this is the number of clusters in the environment")
     parser.add_argument("--clusters-variance-min", type=int, default=500,
                         help="the minimum variance of the clusters")
@@ -159,8 +159,8 @@ def parse_args():
     parser.add_argument("--roads-gu-uniform-partition", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, Every road has the same number of max theorical GUs else the max theorical GUs are randomly partitioned")
     # ROAD CLUSTER ONLY ENV TYPE RANDOM VARIANTS
-    parser.add_argument("--per-roads-clusters-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-                        help="if toggled, the number of clusters on each road is random between 1 and roads-clusters-number else is fixed to roads-clusters-number")
+    parser.add_argument("--per-roads-clusters-number-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+                        help="if toggled, the number of clusters on each road is random between 1 and per-roads-clusters-number else is fixed to per-roads-clusters-number")
     # ROAD ENV TYPE FIXED VARIANTS
     parser.add_argument("--roads-lane-width-min", type=float, default=30.0,
                         help="the minimum width of a single lane in the environment (in meters)")
@@ -244,7 +244,7 @@ def parse_args():
     # Test specific arguments
     parser.add_argument("--updates-per-test", type=int, default=20,
                         help="the number of updates before a test")
-    parser.add_argument("--num-test-episodes", type=int, default=9,
+    parser.add_argument("--num-test-episodes", type=int, default=36,
                         help="the number of episodes to test the agent")
     parser.add_argument("--test-steps-after-trunc", type=int, default=500,
                         help="the number of steps in a test enviroment before a truncation")

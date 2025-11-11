@@ -2,5 +2,7 @@ wandb/
 
 notes.txt
 exploration_map.png
+script/losses.png
+script/reward.png
 
 __pycache__/
