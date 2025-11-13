@@ -58,6 +58,7 @@ RUN_NAME_MAP = {
 }
 '''
 
+'''
 #ROAD
 SELECTED_RUNS = [
     "mixed180-3UAV-powerlinear-1road-poisson-100Fixgu",
@@ -72,6 +73,26 @@ RUN_NAME_MAP = {
     "mixed180-3UAV-power3-1road-poisson-100Fixgu" : "1Road-NoRAU-power3",
     "mixed180-3UAV-powerlinear-1road-poisson-Randomgu" : "1Road-RAU-powerlinear",
     "mixed180-3UAV-power3-1road-poisson-Randomgu" : "1Road-RAU-power3"
+}
+'''
+
+SELECTED_RUNS = [
+    "mixed180-3UAV-power3-1road-1cluster-poisson-100Fixgu",
+    "mixed180-3UAV-powerlinear-1road-1cluster-poisson-100Fixgu",
+    "mixed180-3UAV-power3-1road-[1,2]cluster-poisson-100Fixgu",
+    "mixed180-3UAV-powerlinear-1road-[1,2]cluster-poisson-100Fixgu",
+    "mixed180-3UAV-power3-1road-2cluster-poisson-100Fixgu",
+    "mixed180-3UAV-powerlinear-1road-2cluster-poisson-100Fixgu"
+]
+
+# 👇 Mappa per rinominare le run nella legenda
+RUN_NAME_MAP = {
+    "mixed180-3UAV-power3-1road-1cluster-poisson-100Fixgu": "1Road-1cluster-power3",
+    "mixed180-3UAV-powerlinear-1road-1cluster-poisson-100Fixgu": "1Road-1cluster-powerlinear",
+    "mixed180-3UAV-power3-1road-[1,2]cluster-poisson-100Fixgu": "1Road-[1,2]cluster-power3",
+    "mixed180-3UAV-powerlinear-1road-[1,2]cluster-poisson-100Fixgu": "1Road-[1,2]cluster-powerlinear",
+    "mixed180-3UAV-power3-1road-2cluster-poisson-100Fixgu": "1Road-2cluster-power3",
+    "mixed180-3UAV-powerlinear-1road-2cluster-poisson-100Fixgu": "1Road-2cluster-powerlinear"
 }
 
 # 👇 Metriche di tipo "losses"
