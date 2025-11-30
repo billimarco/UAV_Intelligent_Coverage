@@ -21,7 +21,7 @@ def parse_args():
                         help="if toggled, `torch.backends.cudnn.deterministic=False`")
     parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--cuda-device", type=int, default=1,
+    parser.add_argument("--cuda-device", type=int, default=0,
                         help="if cuda is enabled, this is the device to use (0 by default)")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, this experiment will be tracked with Weights and Biases")
@@ -36,11 +36,11 @@ def parse_args():
     # Algorithm specific arguments
     parser.add_argument("--render-mode", type=str, default=None, 
                         help="Render mode (e.g., human or None")
-    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--train", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the training will be performed")
     parser.add_argument("--use-trained", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="If set, loads and runs a pre-trained model")
-    parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--numerical-test", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="numerical test using trained model")
     
     
@@ -118,7 +118,7 @@ def parse_args():
     
     
     # Environment specific arguments
-    parser.add_argument("--environment-type", type=str, default="uniform", nargs="?", const="random_grouping",
+    parser.add_argument("--environment-type", type=str, default="road_cluster", nargs="?", const="random_grouping",
                         help="Type of environment (e.g., uniform, cluster, road, road_cluster, random_grouping)")
     parser.add_argument("--nlos-toggle", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, NLoS propagation conditions are considered")
@@ -127,7 +127,7 @@ def parse_args():
     parser.add_argument("--environment-gu-bounce", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
                         help="if toggled, GUs bounce when they reach the environment boundaries else they despawn (This is not intended for roads)")
     # ALL ENV TYPES RESET RANDOM VARIANTS
-    parser.add_argument("--environment-type-random", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+    parser.add_argument("--environment-type-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the environment type is randomly chosen between uniform, cluster, road, road_cluster, random_grouping else is fixed to environment-type")
     parser.add_argument("--uav-number-random", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
                         help="if toggled, the number of UAVs is random between 1 and max-uav-number else is fixed to uav-number")
@@ -244,10 +244,12 @@ def parse_args():
     # Test specific arguments
     parser.add_argument("--updates-per-test", type=int, default=20,
                         help="the number of updates before a test")
-    parser.add_argument("--num-test-episodes", type=int, default=36,
+    parser.add_argument("--num-test-episodes", type=int, default=9,
                         help="the number of episodes to test the agent")
     parser.add_argument("--test-steps-after-trunc", type=int, default=500,
                         help="the number of steps in a test enviroment before a truncation")
+    parser.add_argument("--set-up-mode", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+                        help="if toggled, the environment in test mode is setted up using defined parameters else is like train mode")
     
 
     args = parser.parse_args()

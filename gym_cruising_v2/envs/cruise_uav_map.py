@@ -199,6 +199,8 @@ class CruiseUAVWithMap(Cruise):
         if self.gu_number_random:
             self.starting_gu_number = self.np_random.integers(self.min_gu_number, self.max_gu_number + 1)
         
+        # Cambia insieme al metodo get_set_up in mainPPO_v2.py
+        # ----------------------------------
         if self.options.get("test", False):
             if "uav" in self.options:
                 self.uav_number = self.options["uav"]
@@ -206,6 +208,7 @@ class CruiseUAVWithMap(Cruise):
                 self.starting_gu_number = self.options["gu"]
             if "environment_type" in self.options:
                 self.environment_type = self.options["environment_type"]
+        # ----------------------------------
                 
         self.disappear_gu_prob = self.spawn_gu_prob * 4 / self.starting_gu_number
         self.gu_covered = 0
@@ -2332,8 +2335,9 @@ class CruiseUAVWithMap(Cruise):
         RCR = str(self.gu_covered / active_gu_count if active_gu_count > 0 else 0)
         
         if self.options.get("test", False):
-            return {"GU coperti": str(self.gu_covered), "Ground Users": str(
-                active_gu_count), "RCR": RCR, "Collision": collision, "Out_Area" : out_area, 
+            return {"UAV_Number": str(self.uav_number), "Starting_Users": str(self.starting_gu_number), "Environment_Type": str(self.environment_type),
+                "Covered_Users": str(self.gu_covered), "Active_Users": str(active_gu_count), 
+                "RCR": RCR, "Collision": collision, "Out_Area" : out_area, 
                 "boundary_penalty_total": self.boundary_penalty_total, 
                 "collision_penalty_total": self.collision_penalty_total,
                 "spatial_coverage_total": self.spatial_coverage_total,
@@ -2341,6 +2345,7 @@ class CruiseUAVWithMap(Cruise):
                 "homogenous_voronoi_partition_incentive_total": self.homogenous_voronoi_partition_incentive_total,
                 "gu_coverage_total": self.gu_coverage_total}
             
-        return {"GU coperti": str(self.gu_covered), "Ground Users": str(
-            active_gu_count), "RCR": RCR, "Collision": collision, "Out_Area" : out_area}
+        return {"UAV_Number": str(self.uav_number), "Starting_Users": str(self.starting_gu_number), "Environment_Type": str(self.environment_type),
+                "Covered_Users": str(self.gu_covered), "Active_Users": str(active_gu_count), 
+                "RCR": RCR, "Collision": collision, "Out_Area" : out_area}
 

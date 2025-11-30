@@ -117,7 +117,14 @@ def process_state_batch(state_batch):
     return map_exploration_batch, uav_info_batch, connected_gu_positions_batch, uav_mask_batch, gu_mask_batch, uav_flags_batch
 
 def get_set_up():
+    if not args.set_up_mode:
+        options = {
+            "test": True
+        }
+        return options
     
+    # Idealmente si può scrivere il prompt che si vuole per fare i test quindi questa parte di codice è variabile
+    # ----------------------------------
     if args.uav_number_random:
         # Incrementa args.uav_number
         args.uav_number += 1
@@ -125,13 +132,20 @@ def get_set_up():
         # Resetta se supera il massimo
         if args.uav_number > args.max_uav_number:
             args.uav_number = 1
-
+            
+    if args.gu_number_random:
+        args.starting_gu_number = random.randint(args.min_gu_number, args.max_gu_number)
+        
+    if args.environment_type_random:
+        args.environment_type = random.choice(["uniform", "cluster", "road", "road_cluster"])
+    
     options = {
         "uav": args.uav_number,
         "gu": args.starting_gu_number,
         "environment_type": args.environment_type,
         "test": True
     }
+    # ----------------------------------
         
     return options
 
@@ -241,7 +255,7 @@ def test(agent, num_episodes=32, global_step=0):
         homogenous_voronoi_partition_incentive_rewards.append(sum_homogenous_voronoi_partition_incentive_total)
         gu_coverage_rewards.append(sum_gu_coverage_total)
         
-        print(f"Episode {ep + 1}: uav_number = {args.options['uav']}, starting_gu = {args.options['gu']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_areas = {sum_out_area}, collisions = {sum_collision},\n"
+        print(f"Episode {ep + 1}: uav_number = {info['UAV_Number']}, starting_gu = {info['Starting_Users']}, environment_type = {info['Environment_Type']}, steps = {steps}, total_reward = {episode_reward:.2f}, RCR = {avg_rcr:.2f}, out_areas = {sum_out_area}, collisions = {sum_collision},\n"
               f"boundary_penalty_total = {sum_boundary_penalty_total:.2f}, collision_penalty_total = {sum_collision_penalty_total:.2f}, spatial_coverage_total = {sum_spatial_coverage_total:.2f},\n"
               f"exploration_incentive_total = {sum_exploration_incentive_total:.2f}, homogenous_voronoi_partition_incentive_total = {sum_homogenous_voronoi_partition_incentive_total:.2f}, gu_coverage_total = {sum_gu_coverage_total:.2f}\n")
 
